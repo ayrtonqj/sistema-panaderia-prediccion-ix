@@ -1,0 +1,50 @@
+{
+  "producto_id": 11,
+  "producto_nombre": "Pan Baguette",
+  "mejor_algoritmo": "Linear Regression",
+  "rmse": 2.15,
+  "mae": 1.69,
+  "r2": 0.6929,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 1.85,
+      "rmse": 2.25,
+      "r2": 0.6641
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 1.69,
+      "rmse": 2.15,
+      "r2": 0.6929
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 2.06,
+      "rmse": 2.7,
+      "r2": 0.5171
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 3.15,
+      "rmse": 3.88,
+      "r2": -0.0007
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 2.18,
+      "rmse": 2.66,
+      "r2": 0.5305
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 1.89,
+      "rmse": 2.36,
+      "r2": 0.6291
+    }
+  ]
+}

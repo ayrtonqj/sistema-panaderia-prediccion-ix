@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:15
+    container_name: postgres_tesis
+    restart: always
+    environment:
+      POSTGRES_USER: eduardo
+      POSTGRES_PASSWORD: 123456
+      POSTGRES_DB: panaderia_victoria
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin_tesis
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@tesis.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8080:80"
+    depends_on:
+      - db
+
+  n8n:
+    image: n8nio/n8n
+    container_name: n8n_tesis
+    restart: always
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=admin123
+      - WEBHOOK_URL=http://localhost:5678
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
+  n8n_data:

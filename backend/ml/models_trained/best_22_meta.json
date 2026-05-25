@@ -1,0 +1,50 @@
+{
+  "producto_id": 22,
+  "producto_nombre": "Bizcocho",
+  "mejor_algoritmo": "Ensemble (RF+GB+LR)",
+  "rmse": 3.07,
+  "mae": 2.28,
+  "r2": 0.7491,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 2.39,
+      "rmse": 3.15,
+      "r2": 0.7368
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 2.66,
+      "rmse": 3.45,
+      "r2": 0.6848
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 2.66,
+      "rmse": 3.63,
+      "r2": 0.6506
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 5.52,
+      "rmse": 6.21,
+      "r2": -0.0232
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 2.79,
+      "rmse": 3.5,
+      "r2": 0.6747
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 2.28,
+      "rmse": 3.07,
+      "r2": 0.7491
+    }
+  ]
+}

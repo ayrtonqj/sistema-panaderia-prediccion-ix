@@ -1,0 +1,50 @@
+{
+  "producto_id": 3,
+  "producto_nombre": "Pan de Molde",
+  "mejor_algoritmo": "MLP Neural Network",
+  "rmse": 3.17,
+  "mae": 2.36,
+  "r2": 0.4233,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 2.58,
+      "rmse": 4.26,
+      "r2": -0.0447
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 2.71,
+      "rmse": 4.41,
+      "r2": -0.1179
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 2.85,
+      "rmse": 4.79,
+      "r2": -0.3165
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 3.92,
+      "rmse": 4.74,
+      "r2": -0.288
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 2.36,
+      "rmse": 3.17,
+      "r2": 0.4233
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 2.62,
+      "rmse": 4.51,
+      "r2": -0.1708
+    }
+  ]
+}

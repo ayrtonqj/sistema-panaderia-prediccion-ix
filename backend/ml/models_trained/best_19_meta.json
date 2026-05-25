@@ -1,0 +1,50 @@
+{
+  "producto_id": 19,
+  "producto_nombre": "Cheesecake",
+  "mejor_algoritmo": "Ensemble (RF+GB+LR)",
+  "rmse": 0.64,
+  "mae": 0.46,
+  "r2": 0.5579,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 0.48,
+      "rmse": 0.66,
+      "r2": 0.5346
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 0.49,
+      "rmse": 0.68,
+      "r2": 0.5069
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 0.47,
+      "rmse": 0.67,
+      "r2": 0.5168
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 0.81,
+      "rmse": 0.97,
+      "r2": -0.0017
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 0.54,
+      "rmse": 0.7,
+      "r2": 0.4721
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 0.46,
+      "rmse": 0.64,
+      "r2": 0.5579
+    }
+  ]
+}

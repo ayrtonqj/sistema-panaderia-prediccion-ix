@@ -1,0 +1,50 @@
+{
+  "producto_id": 20,
+  "producto_nombre": "Pie de Lim\u00f3n",
+  "mejor_algoritmo": "Random Forest",
+  "rmse": 0.59,
+  "mae": 0.5,
+  "r2": 0.5833,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 0.5,
+      "rmse": 0.59,
+      "r2": 0.5833
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 0.45,
+      "rmse": 0.59,
+      "r2": 0.5867
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 0.53,
+      "rmse": 0.7,
+      "r2": 0.4103
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 0.8,
+      "rmse": 0.92,
+      "r2": -0.0186
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 0.51,
+      "rmse": 0.66,
+      "r2": 0.4788
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 0.48,
+      "rmse": 0.6,
+      "r2": 0.5613
+    }
+  ]
+}

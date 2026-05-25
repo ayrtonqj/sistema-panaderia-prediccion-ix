@@ -1,0 +1,50 @@
+{
+  "producto_id": 23,
+  "producto_nombre": "Suspiro Lime\u00f1o",
+  "mejor_algoritmo": "Random Forest",
+  "rmse": 2.34,
+  "mae": 1.94,
+  "r2": 0.818,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 1.94,
+      "rmse": 2.34,
+      "r2": 0.818
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 2.15,
+      "rmse": 2.69,
+      "r2": 0.7586
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 2.32,
+      "rmse": 2.74,
+      "r2": 0.7493
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 4.65,
+      "rmse": 5.47,
+      "r2": -0.0002
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 2.31,
+      "rmse": 2.95,
+      "r2": 0.7086
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 1.95,
+      "rmse": 2.38,
+      "r2": 0.8117
+    }
+  ]
+}

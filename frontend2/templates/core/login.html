@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Panadería Victoria</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .login-container {
+            display: flex;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            overflow: hidden;
+            max-width: 900px;
+            width: 100%;
+        }
+
+        .login-image {
+            flex: 1;
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.9), rgba(118, 75, 162, 0.9)),
+                        url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23ffffff10" width="50" height="50"/><rect fill="%23ffffff05" x="50" y="50" width="50" height="50"/></svg>');
+            background-size: cover;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 40px;
+            color: white;
+        }
+
+        .login-image h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .login-image p {
+            font-size: 1rem;
+            opacity: 0.9;
+            text-align: center;
+        }
+
+        .login-form-section {
+            flex: 1;
+            padding: 50px 40px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .login-form-section h2 {
+            font-size: 1.8rem;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .login-form-section .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 0.95rem;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #4a5568;
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        .input-wrapper {
+            position: relative;
+        }
+
+        .input-wrapper input {
+            width: 100%;
+            padding: 14px 16px 14px 45px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        .input-wrapper input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+        }
+
+        .input-wrapper .icon {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #a0aec0;
+        }
+
+        .btn-login {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        .btn-login:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .error-message {
+            background: #fed7d7;
+            color: #c53030;
+            padding: 12px 16px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .roles-info {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .roles-info h4 {
+            color: #4a5568;
+            font-size: 0.85rem;
+            margin-bottom: 12px;
+        }
+
+        .roles-list {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .role-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.8rem;
+            color: #718096;
+        }
+
+        .role-item span {
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+        }
+
+        .role-admin { background: #fed7e2; color: #ed64a6; }
+        .role-gerente { background: #c6f6d5; color: #48bb78; }
+        .role-vendedor { background: #bee3f8; color: #4299e1; }
+        .role-cocina { background: #feebc8; color: #ed8936; }
+
+        .theme-toggle-login {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 44px;
+            height: 44px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+            cursor: pointer;
+            color: white;
+            font-size: 22px;
+            transition: all 0.3s;
+            backdrop-filter: blur(10px);
+            border: 2px solid rgba(255,255,255,0.3);
+        }
+        .theme-toggle-login:hover {
+            background: rgba(255,255,255,0.3);
+            transform: scale(1.1);
+        }
+
+        @media (max-width: 768px) {
+            .login-container {
+                flex-direction: column;
+            }
+            .login-image {
+                padding: 30px;
+            }
+            .login-image h1 {
+                font-size: 1.8rem;
+            }
+            .login-form-section {
+                padding: 30px 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="theme-toggle-login" onclick="toggleTheme()" title="Cambiar tema">
+        <span id="theme-icon-login">☾</span>
+    </div>
+    <div class="login-container">
+        <div class="login-image">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" width="200" height="80">
+                <defs>
+                    <linearGradient id="panGradLogin" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" style="stop-color:#fff"/>
+                        <stop offset="100%" style="stop-color:#e8e8e8"/>
+                    </linearGradient>
+                </defs>
+                <rect x="10" y="10" width="60" height="60" rx="15" fill="url(#panGradLogin)"/>
+                <ellipse cx="40" cy="45" rx="22" ry="17" fill="#e8c9a0"/>
+                <ellipse cx="40" cy="42" rx="19" ry="14" fill="#f5deb3"/>
+                <path d="M25 38 Q40 30 55 38" stroke="#c9956c" stroke-width="2.5" fill="none"/>
+                <path d="M28 44 Q40 36 52 44" stroke="#c9956c" stroke-width="2.5" fill="none"/>
+                <path d="M31 50 Q40 42 49 50" stroke="#c9956c" stroke-width="2.5" fill="none"/>
+                <ellipse cx="32" cy="36" rx="5" ry="3" fill="#fff5e6" opacity="0.7"/>
+                <text x="80" y="35" font-family="Poppins, Arial, sans-serif" font-size="18" font-weight="700" fill="white" letter-spacing="2">VICTORIA</text>
+                <text x="80" y="58" font-family="Poppins, Arial, sans-serif" font-size="14" font-weight="400" fill="rgba(255,255,255,0.8)" letter-spacing="4">PANADERÍA</text>
+            </svg>
+            <p style="margin-top: 15px;">Sistema de Gestión Predictiva</p>
+        </div>
+        <div class="login-form-section">
+            <h2>Bienvenido</h2>
+            <p class="subtitle">Ingresa tus credenciales para continuar</p>
+
+            {% if error %}
+            <div class="error-message">
+                <span>⚠️</span>
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <form method="POST">
+                {% csrf_token %}
+                <div class="form-group">
+                    <label for="username">Usuario</label>
+                    <div class="input-wrapper">
+                        <span class="icon">👤</span>
+                        <input type="text" id="username" name="username" placeholder="Ingresa tu usuario" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="password">Contraseña</label>
+                    <div class="input-wrapper">
+                        <span class="icon">🔒</span>
+                        <input type="password" id="password" name="password" placeholder="Ingresa tu contraseña" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn-login">Iniciar Sesión</button>
+            </form>
+
+            <div class="roles-info">
+                <h4>Roles disponibles:</h4>
+                <div class="roles-list">
+                    <div class="role-item">
+                        <span class="role-admin">A</span>
+                        Administrador
+                    </div>
+                    <div class="role-item">
+                        <span class="role-gerente">G</span>
+                        Gerente
+                    </div>
+                    <div class="role-item">
+                        <span class="role-vendedor">V</span>
+                        Vendedor
+                    </div>
+                    <div class="role-item">
+                        <span class="role-cocina">C</span>
+                        Cocina
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleTheme() {
+            const body = document.body;
+            const themeIcon = document.getElementById('theme-icon-login');
+            body.classList.toggle('dark');
+            
+            if (body.classList.contains('dark')) {
+                localStorage.setItem('theme', 'dark');
+                themeIcon.textContent = '☀';
+            } else {
+                localStorage.setItem('theme', 'light');
+                themeIcon.textContent = '☾';
+            }
+        }
+
+        // Init theme from localStorage
+        if (localStorage.getItem('theme') === 'dark') {
+            document.body.classList.add('dark');
+            document.getElementById('theme-icon-login').textContent = '☀';
+        }
+    </script>
+</body>
+</html>

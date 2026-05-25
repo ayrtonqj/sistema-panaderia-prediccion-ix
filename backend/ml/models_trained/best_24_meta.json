@@ -1,0 +1,50 @@
+{
+  "producto_id": 24,
+  "producto_nombre": "Arroz con Leche",
+  "mejor_algoritmo": "Random Forest",
+  "rmse": 5.6,
+  "mae": 3.68,
+  "r2": 0.2125,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 3.68,
+      "rmse": 5.6,
+      "r2": 0.2125
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 3.54,
+      "rmse": 5.81,
+      "r2": 0.1534
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 4.02,
+      "rmse": 5.96,
+      "r2": 0.1078
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 5.31,
+      "rmse": 6.39,
+      "r2": -0.0246
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 4.29,
+      "rmse": 5.99,
+      "r2": 0.0987
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 3.51,
+      "rmse": 5.71,
+      "r2": 0.1824
+    }
+  ]
+}

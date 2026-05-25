@@ -1,0 +1,50 @@
+{
+  "producto_id": 5,
+  "producto_nombre": "Empanada de Carne",
+  "mejor_algoritmo": "MLP Neural Network",
+  "rmse": 11.38,
+  "mae": 7.55,
+  "r2": 0.5156,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 6.46,
+      "rmse": 12.39,
+      "r2": 0.426
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 8.55,
+      "rmse": 14.86,
+      "r2": 0.1744
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 7.67,
+      "rmse": 13.99,
+      "r2": 0.2679
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 13.75,
+      "rmse": 16.69,
+      "r2": -0.0412
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 7.55,
+      "rmse": 11.38,
+      "r2": 0.5156
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 7.23,
+      "rmse": 13.35,
+      "r2": 0.3339
+    }
+  ]
+}

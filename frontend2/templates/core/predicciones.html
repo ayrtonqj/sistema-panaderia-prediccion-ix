@@ -1,0 +1,136 @@
+{% extends 'core/base.html' %}
+
+{% block title %}Predicciones - Panadería Victoria{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display: flex; justify-content: space-between; align-items: center;">
+    <div>
+        <h1>🔮 Predicciones de Demanda</h1>
+        <p style="color: #8892a4;">Sistema de Machine Learning para predecir la producción</p>
+    </div>
+    <button class="btn" onclick="generarPDF()" style="background: #e53e3e;">📄 Descargar PDF</button>
+</div>
+
+<div class="grid-2">
+    <div class="card">
+        <h3>Generar Predicciones</h3>
+        <p style="color: #8892a4; margin-bottom: 15px;">El modelo usa datos históricos, clima y día de la semana para predecir la demanda.</p>
+        <button class="btn" onclick="generarPredicciones()">🔄 Generar Predicciones (7 días)</button>
+        <div id="predResult"></div>
+    </div>
+    
+    <div class="card">
+        <h3>Sincronizar Clima</h3>
+        <p style="color: #8892a4; margin-bottom: 15px;">Obtiene el clima forecast de Open-Meteo para mejorar predicciones.</p>
+        <button class="btn" onclick="sincronizarClima()">🌤️ Sincronizar Clima (7 días)</button>
+        <div id="climaResult"></div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Predicciones Actuales</h3>
+    <div class="table-container">
+        <table id="prediccionesTable">
+            <thead>
+                <tr>
+                    <th>Producto</th>
+                    <th>Fecha</th>
+                    <th>Demanda Estimada</th>
+                    <th>Confianza</th>
+                </tr>
+            </thead>
+            <tbody id="prediccionesBody">
+                {% if predicciones %}
+                    {% for p in predicciones %}
+                    <tr data-producto-id="{{ p.producto_id }}">
+                        <td>{{ p.producto_id }}</td>
+                        <td>{{ p.fecha_proyectada }}</td>
+                        <td>{{ p.demanda_estimada|floatformat:1 }}</td>
+                        <td>{% if p.confianza_prediccion %}{{ p.confianza_prediccion|floatformat:1 }}%{% else %}—{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr><td colspan="4" style="text-align: center; color: #8892a4;">No hay predicciones generadas. Genera predicciones para ver los resultados.</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+        
+        <script>
+        var productosDict = {{ productos_dict|safe|default:"{}" }};
+        document.querySelectorAll('#prediccionesBody tr').forEach(function(row) {
+            var prodId = row.getAttribute('data-producto-id');
+            var nombre = productosDict[prodId] || prodId;
+            row.querySelector('td').textContent = nombre;
+});
+</script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script>
+async function generarPDF() {
+    const contenido = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Predicciones de Demanda - Panadería Victoria</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; padding: 20px; color: #333; }
+        .header { text-align: center; padding: 20px 0; border-bottom: 3px solid #667eea; margin-bottom: 20px; }
+        .header h1 { color: #667eea; }
+        .header p { color: #888; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; font-size: 13px; }
+        th { background: #667eea; color: white; }
+        tr:nth-child(even) { background: #f9f9f9; }
+        .footer { margin-top: 30px; text-align: center; font-size: 11px; color: #888; }
+    </style>
+</head>
+<body>
+    <div class="header" style="display: flex; align-items: center; justify-content: center; gap: 20px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 70" width="140" height="45">
+            <defs>
+                <linearGradient id="panGrad4" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" style="stop-color:#d4a574"/>
+                    <stop offset="50%" style="stop-color:#c9956c"/>
+                    <stop offset="100%" style="stop-color:#b8845c"/>
+                </linearGradient>
+            </defs>
+            <rect x="5" y="5" width="55" height="55" rx="12" fill="url(#panGrad4)"/>
+            <ellipse cx="32" cy="35" rx="20" ry="16" fill="#e8c9a0"/>
+            <ellipse cx="32" cy="32" rx="17" ry="13" fill="#f5deb3"/>
+            <path d="M20 30 Q32 22 44 30" stroke="#c9956c" stroke-width="2" fill="none"/>
+            <path d="M22 36 Q32 28 42 36" stroke="#c9956c" stroke-width="2" fill="none"/>
+            <path d="M24 42 Q32 34 40 42" stroke="#c9956c" stroke-width="2" fill="none"/>
+            <ellipse cx="26" cy="28" rx="4" ry="3" fill="#fff5e6" opacity="0.7"/>
+            <text x="70" y="32" font-family="Arial" font-size="16" font-weight="700" fill="#667eea">VICTORIA</text>
+            <text x="70" y="50" font-family="Arial" font-size="12" font-weight="500" fill="#764ba2">PANADERÍA</text>
+        </svg>
+        <div>
+            <h1 style="margin: 0; font-size: 20px; color: #667eea;">Predicciones de Demanda</h1>
+            <p style="margin: 5px 0 0 0; font-size: 12px; color: #888;">Generado: ${new Date().toLocaleDateString()}</p>
+        </div>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Producto</th>
+                <th>Fecha</th>
+                <th>Demanda Estimada</th>
+                <th>Confianza</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${document.querySelector('#prediccionesTable tbody').innerHTML}
+        </tbody>
+    </table>
+    <div class="footer">Sistema de Gestión Predictiva - Panadería Victoria</div>
+</body>
+</html>`;
+    
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(contenido);
+    printWindow.document.close();
+    setTimeout(() => printWindow.print(), 500);
+}
+</script>
+{% endblock %}

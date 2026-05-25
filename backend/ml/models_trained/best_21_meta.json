@@ -1,0 +1,50 @@
+{
+  "producto_id": 21,
+  "producto_nombre": "Torta de Chocolate",
+  "mejor_algoritmo": "Ensemble (RF+GB+LR)",
+  "rmse": 0.56,
+  "mae": 0.47,
+  "r2": 0.7155,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 0.52,
+      "rmse": 0.6,
+      "r2": 0.6737
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 0.47,
+      "rmse": 0.57,
+      "r2": 0.7105
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 0.51,
+      "rmse": 0.62,
+      "r2": 0.6517
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 0.91,
+      "rmse": 1.06,
+      "r2": -0.0138
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 0.63,
+      "rmse": 0.76,
+      "r2": 0.4813
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 0.47,
+      "rmse": 0.56,
+      "r2": 0.7155
+    }
+  ]
+}

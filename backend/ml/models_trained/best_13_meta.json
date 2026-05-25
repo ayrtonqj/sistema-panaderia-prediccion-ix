@@ -1,0 +1,50 @@
+{
+  "producto_id": 13,
+  "producto_nombre": "Dona Glaseada",
+  "mejor_algoritmo": "Random Forest",
+  "rmse": 4.99,
+  "mae": 3.79,
+  "r2": 0.3809,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 3.79,
+      "rmse": 4.99,
+      "r2": 0.3809
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 3.92,
+      "rmse": 5.15,
+      "r2": 0.3414
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 5.05,
+      "rmse": 6.46,
+      "r2": -0.0387
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 5.81,
+      "rmse": 6.72,
+      "r2": -0.123
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 4.32,
+      "rmse": 5.25,
+      "r2": 0.3144
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 3.88,
+      "rmse": 5.23,
+      "r2": 0.3191
+    }
+  ]
+}

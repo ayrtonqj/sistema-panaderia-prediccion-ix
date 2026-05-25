@@ -1,0 +1,199 @@
+{
+  "name": "Panaderia Victoria - Ordenes Automaticas de Compra",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "trigger-schedule",
+      "name": "Cada dia a las 8:00 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8000/insumos/alertas/",
+        "options": {}
+      },
+      "id": "http-alertas",
+      "name": "1. Obtener Alertas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8000/proveedores/",
+        "options": {}
+      },
+      "id": "http-proveedores",
+      "name": "2. Obtener Proveedores",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get alerts - referenciando explícitamente al Nodo 1\nconst alertItems = $('1. Obtener Alertas').all();\n\n// Get providers - referenciando el input actual (que viene del Nodo 2)\nconst providerItems = $input.all();\nconst proveedoresMap = {};\n\n// Safely build the map\nfor (let i = 0; i < providerItems.length; i++) {\n  const prov = providerItems[i].json;\n  if (prov && prov.id) {\n    proveedoresMap[prov.id] = prov;\n  }\n}\n\n// Filter items that need reorder\nconst criticos = [];\nfor (let i = 0; i < alertItems.length; i++) {\n  const item = alertItems[i].json;\n  // Convertimos a booleano explícito por seguridad (en caso de que venga como string 'true')\n  if (item && (item.necesita_reorden === true || item.necesita_reorden === 'true')) {\n    criticos.push(item);\n  }\n}\n\n// If there are critical items, create orders\nif (criticos.length > 0) {\n  const results = [];\n  for (let i = 0; i < criticos.length; i++) {\n    const insumo = criticos[i];\n    const provId = insumo.proveedor_id;\n    const proveedor = proveedoresMap[provId] || null;\n    \n    results.push({\n      json: {\n        tiene_orden: true,\n        insumo_id: insumo.id,\n        insumo_nombre: insumo.nombre,\n        stock_actual: insumo.stock_actual,\n        stock_minimo: insumo.stock_minimo,\n        unidad_medida: insumo.unidad_medida,\n        proveedor_id: provId,\n        proveedor_nombre: proveedor ? String(proveedor.nombre) : 'Sin proveedor',\n        proveedor_email: proveedor ? String(proveedor.email || '') : '',\n        cantidad_a_ordenar: Math.ceil((insumo.stock_minimo * 2) - insumo.stock_actual),\n        fecha_orden: new Date().toISOString().split('T')[0]\n      }\n    });\n  }\n  return results;\n}\n\n// No critical items - return message\nreturn [{\n  json: {\n    tiene_orden: false,\n    mensaje: 'No hay insumos bajo stock minimo'\n  }\n}];"
+      },
+      "id": "code-combine",
+      "name": "3. Procesar Insumos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true
+          },
+          "conditions": [
+            {
+              "id": "cond-tiene-orden",
+              "leftValue": "={{ $json.tiene_orden ? 'SI' : 'NO' }}",
+              "rightValue": "SI",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "if-tiene-orden",
+      "name": "4. Hay ordenes?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/ordenes-compra/",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ \n  proveedor_id: Number($json.proveedor_id), \n  insumo_id: Number($json.insumo_id), \n  fecha_orden: $json.fecha_orden, \n  cantidad: Number($json.cantidad_a_ordenar), \n  estado: 'pendiente' \n}) }}",
+        "options": {}
+      },
+      "id": "http-crear-orden",
+      "name": "5. Crear Orden",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process ALL items (not just the first one)\nconst items = $input.all();\nconst insumos = $('3. Procesar Insumos').all();\n\n// Create a map of insumos for quick lookup\nconst insumosMap = {};\nfor (let i = 0; i < insumos.length; i++) {\n  const insumo = insumos[i].json;\n  insumosMap[insumo.insumo_id] = insumo;\n}\n\n// Process each order result\nconst results = [];\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i].json;\n  const insumo = insumosMap[item.insumo_id] || {};\n  \n  results.push({\n    json: {\n      orden_id: item.id || 'N/A',\n      insumo_nombre: String(insumo.insumo_nombre || 'Unknown'),\n      proveedor_nombre: String(insumo.proveedor_nombre || 'Unknown'),\n      cantidad: item.cantidad || insumo.cantidad_a_ordenar,\n      unidad_medida: String(insumo.unidad_medida || ''),\n      mensaje: 'Orden creada: ' + (insumo.cantidad_a_ordenar || '?') + ' ' + (insumo.unidad_medida || '') + ' de ' + (insumo.insumo_nombre || 'Unknown')\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "code-resultado",
+      "name": "6. Resultado Orden",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1750, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nreturn [{\n  json: {\n    mensaje: 'Sin ordenes: ' + String(item.mensaje),\n    status: 'OK'\n  }\n}];"
+      },
+      "id": "code-sin-ordenes",
+      "name": "6b. Sin Ordenes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1750, 500]
+    }
+  ],
+  "connections": {
+    "Cada dia a las 8:00 AM": {
+      "main": [
+        [
+          {
+            "node": "1. Obtener Alertas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Obtener Alertas": {
+      "main": [
+        [
+          {
+            "node": "2. Obtener Proveedores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Obtener Proveedores": {
+      "main": [
+        [
+          {
+            "node": "3. Procesar Insumos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Procesar Insumos": {
+      "main": [
+        [
+          {
+            "node": "4. Hay ordenes?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Hay ordenes?": {
+      "main": [
+        [
+          {
+            "node": "5. Crear Orden",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "6b. Sin Ordenes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. Crear Orden": {
+      "main": [
+        [
+          {
+            "node": "6. Resultado Orden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "triggerAt": "2026-05-04T08:00:00.000Z",
+  "id": "panaderia-victoria-ordenes-auto"
+}

@@ -1,0 +1,50 @@
+{
+  "producto_id": 4,
+  "producto_nombre": "Croissant",
+  "mejor_algoritmo": "MLP Neural Network",
+  "rmse": 8.06,
+  "mae": 5.47,
+  "r2": 0.4547,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 5.62,
+      "rmse": 10.06,
+      "r2": 0.1496
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 6.13,
+      "rmse": 10.94,
+      "r2": -0.0053
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 6.21,
+      "rmse": 11.49,
+      "r2": -0.1083
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 9.28,
+      "rmse": 11.34,
+      "r2": -0.0804
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 5.47,
+      "rmse": 8.06,
+      "r2": 0.4547
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 5.8,
+      "rmse": 10.54,
+      "r2": 0.0667
+    }
+  ]
+}

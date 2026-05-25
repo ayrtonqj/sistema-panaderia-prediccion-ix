@@ -1,0 +1,50 @@
+{
+  "producto_id": 7,
+  "producto_nombre": "Galletas de Avena",
+  "mejor_algoritmo": "MLP Neural Network",
+  "rmse": 13.65,
+  "mae": 9.85,
+  "r2": 0.5755,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 12.08,
+      "rmse": 20.8,
+      "r2": 0.0134
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 14.9,
+      "rmse": 24.29,
+      "r2": -0.3451
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 13.34,
+      "rmse": 23.4,
+      "r2": -0.2478
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 18.1,
+      "rmse": 22.47,
+      "r2": -0.1511
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 9.85,
+      "rmse": 13.65,
+      "r2": 0.5755
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 13.27,
+      "rmse": 23.22,
+      "r2": -0.2288
+    }
+  ]
+}

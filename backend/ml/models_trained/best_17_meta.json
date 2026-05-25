@@ -1,0 +1,50 @@
+{
+  "producto_id": 17,
+  "producto_nombre": "Pan con Chicharr\u00f3n",
+  "mejor_algoritmo": "Random Forest",
+  "rmse": 8.66,
+  "mae": 5.46,
+  "r2": 0.1278,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 5.46,
+      "rmse": 8.66,
+      "r2": 0.1278
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 5.42,
+      "rmse": 8.8,
+      "r2": 0.0997
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 7.09,
+      "rmse": 10.64,
+      "r2": -0.3168
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 8.22,
+      "rmse": 9.91,
+      "r2": -0.1424
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 5.72,
+      "rmse": 8.76,
+      "r2": 0.1073
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 5.74,
+      "rmse": 9.28,
+      "r2": -0.0016
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+{% extends 'core/base.html' %}
+
+{% block title %}Dashboard - Panadería Victoria{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>🏠 Dashboard Panadería Victoria</h1>
+    <p style="color: #8892a4;">Bienvenido al sistema de gestión predictiva</p>
+</div>
+
+{% if resumen %}
+    <div class="grid-4">
+        <div class="metric">
+            <div class="value">{{ resumen.ventas_hoy|floatformat:0 }} uds</div>
+            <div class="label">📦 Ventas Hoy</div>
+        </div>
+        <div class="metric">
+            <div class="value" style="{% if resumen.mermas_hoy > 0 %}color: #e74c3c{% endif %}">{{ resumen.mermas_hoy|floatformat:0 }} uds</div>
+            <div class="label">⚠️ Mermas Hoy</div>
+        </div>
+        <div class="metric">
+            <div class="value" style="{% if resumen.pct_merma_30d > 20 %}color: #e74c3c{% endif %}">{{ resumen.pct_merma_30d }}%</div>
+            <div class="label">📊 % Merma (30d)</div>
+        </div>
+        <div class="metric">
+            <div class="value" style="{% if resumen.insumos_bajo_stock > 0 %}color: #e74c3c{% endif %}">{{ resumen.insumos_bajo_stock }}</div>
+            <div class="label">🔴 Insumos en Alerta</div>
+        </div>
+    </div>
+
+    <div class="grid-2">
+        <div class="card">
+            <h3>🔮 Producción Sugerida (Próximos 7 días)</h3>
+            {% if resumen.prediccion_semana %}
+                <div style="height: 250px;">
+                    <canvas id="predChart"></canvas>
+                </div>
+            {% else %}
+                <p style="color: #8892a4;">No hay predicciones generadas. Ve a Predicciones para generarlas.</p>
+            {% endif %}
+        </div>
+        
+        <div class="card">
+            <h3>📋 Resumen de Operaciones</h3>
+            <p><strong>Órdenes pendientes:</strong> {{ resumen.ordenes_pendientes }}</p>
+            <p><strong>Fecha:</strong> {% now "Y-m-d" %}</p>
+            <br>
+            <a href="{% url 'registro_diario' %}" class="btn" style="width: 100%; text-align: center;">📝 Ir a Registro Diario</a>
+            <br><br>
+            <a href="{% url 'reportes_financieros' %}" class="btn" style="width: 100%; text-align: center;">💰 Ver Reportes Financieros</a>
+        </div>
+    </div>
+    
+    <div class="grid-4">
+        <div class="card" style="text-align: center;">
+            <h3>📦 Productos</h3>
+            <div style="font-size: 32px; color: #667eea;">{{ n_productos|default:0 }}</div>
+        </div>
+        <div class="card" style="text-align: center;">
+            <h3>📈 Ventas 7 días</h3>
+            <div style="font-size: 32px; color: #27ae60;">{{ resumen.ventas_7d|floatformat:0 }}</div>
+        </div>
+        <div class="card" style="text-align: center;">
+            <h3>📉 Mermas 30 días</h3>
+            <div style="font-size: 32px; color: #e74c3c;">{{ resumen.mermas_30d|floatformat:0 }}</div>
+        </div>
+        <div class="card" style="text-align: center;">
+            <h3>🛒 Órdenes</h3>
+            <div style="font-size: 32px; color: #f39c12;">{{ resumen.ordenes_pendientes }}</div>
+        </div>
+    </div>
+{% else %}
+    <div class="alert alert-error">
+        ⚠️ No se puede conectar con el servidor. Verifica que el backend esté corriendo en http://localhost:8000
+    </div>
+{% endif %}
+
+<script>
+{% if resumen.prediccion_semana %}
+(function() {
+    const predicciones = {{ resumen.prediccion_semana|safe|default:"[]" }};
+    if (predicciones.length > 0) {
+        const ctx = document.getElementById('predChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: predicciones.map(p => p.producto),
+                datasets: [{
+                    label: 'Demanda estimada (7 días)',
+                    data: predicciones.map(p => p.demanda_total_7d),
+                    backgroundColor: '#667eea',
+                    borderColor: '#764ba2',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { 
+                        beginAtZero: true,
+                        grid: { color: '#e2e8f0' },
+                        ticks: { color: '#4a5568' }
+                    },
+                    x: {
+                        grid: { display: false },
+                        ticks: { color: '#4a5568' }
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#4a5568' } }
+                }
+            }
+        });
+    }
+})();
+{% endif %}
+</script>
+{% endblock %}

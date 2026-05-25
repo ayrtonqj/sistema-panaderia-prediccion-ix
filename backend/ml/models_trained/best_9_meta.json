@@ -1,0 +1,50 @@
+{
+  "producto_id": 9,
+  "producto_nombre": "Pan de Yema",
+  "mejor_algoritmo": "Random Forest",
+  "rmse": 12.85,
+  "mae": 8.56,
+  "r2": 0.4364,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 8.56,
+      "rmse": 12.85,
+      "r2": 0.4364
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 8.4,
+      "rmse": 13.99,
+      "r2": 0.332
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 8.95,
+      "rmse": 14.16,
+      "r2": 0.3153
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 15.07,
+      "rmse": 17.62,
+      "r2": -0.06
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 10.51,
+      "rmse": 15.5,
+      "r2": 0.1801
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 8.33,
+      "rmse": 13.36,
+      "r2": 0.3908
+    }
+  ]
+}

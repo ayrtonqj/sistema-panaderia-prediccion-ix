@@ -1,0 +1,665 @@
+{% extends 'core/base.html' %}
+
+{% block title %}Reportes Financieros - Panadería Victoria{% endblock %}
+
+{% block extra_css %}
+<style>
+    @media print {
+        .no-print {
+            display: none !important;
+        }
+
+        .print-only {
+            display: block !important;
+        }
+
+        body {
+            background: white !important;
+            color: black !important;
+        }
+
+        .card {
+            border: 1px solid #ccc !important;
+            background: white !important;
+        }
+
+        .metric {
+            background: #f5f5f5 !important;
+            border: 1px solid #ddd !important;
+        }
+    }
+
+    .print-only {
+        display: none;
+    }
+
+    .date-input-wrapper {
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+
+    .date-input-wrapper input[type="date"] {
+        padding: 12px 40px 12px 16px;
+        border: 2px solid #e2e8f0;
+        border-radius: 12px;
+        font-size: 14px;
+        font-weight: 500;
+        color: #4a5568;
+        background: #f8fafc;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        min-width: 160px;
+    }
+
+    .date-input-wrapper input[type="date"]:hover {
+        border-color: #cbd5e1;
+        background: #fff;
+    }
+
+    .date-input-wrapper input[type="date"]:focus {
+        outline: none;
+        border-color: #667eea;
+        background: #fff;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+    }
+
+    .date-input-wrapper .calendar-icon {
+        position: absolute;
+        right: 14px;
+        color: #8892a4;
+        pointer-events: none;
+        font-size: 18px;
+    }
+
+    .date-separator {
+        display: flex;
+        align-items: center;
+        color: #667eea;
+        font-weight: 600;
+        padding: 0 8px;
+    }
+    .sortable {
+        cursor: pointer;
+        user-select: none;
+        transition: background 0.2s;
+    }
+    .sortable:hover {
+        background: rgba(102, 126, 234, 0.1);
+    }
+    .sort-icon {
+        font-size: 10px;
+        opacity: 0.4;
+        margin-left: 4px;
+    }
+    th.sorted .sort-icon {
+        opacity: 1;
+        color: #667eea;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>💰 Reportes Financieros</h1>
+    <p style="color: #8892a4;">Analiza la rentabilidad de tu negocio</p>
+</div>
+
+<div class="card no-print">
+    <h3>📅 Selección de Período</h3>
+    <div style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
+        <div>
+            <label style="color: #4a5568; font-size: 13px; font-weight: 600; margin-bottom: 8px; display: block;">Fecha
+                Inicio</label>
+            <div class="date-input-wrapper">
+                <input type="date" id="fechaInicio" value="{% now 'Y-m-01' %}">
+                <span class="calendar-icon">📅</span>
+            </div>
+        </div>
+        <div class="date-separator">—</div>
+        <div>
+            <label style="color: #4a5568; font-size: 13px; font-weight: 600; margin-bottom: 8px; display: block;">Fecha
+                Fin</label>
+            <div class="date-input-wrapper">
+                <input type="date" id="fechaFin" value="{% now 'Y-m-d' %}">
+                <span class="calendar-icon">📅</span>
+            </div>
+        </div>
+        <button class="btn" onclick="generarReporte()">📊 Generar Reporte</button>
+        <button class="btn" onclick="descargarPDF()">📄 Descargar PDF</button>
+    </div>
+    <div id="reporteResult"></div>
+</div>
+
+<div id="reportesContent" style="display: none;">
+    <div class="grid-4">
+        <div class="metric">
+            <div class="value" id="ingresos">S/ 0.00</div>
+            <div class="label">💰 Ingresos</div>
+        </div>
+        <div class="metric">
+            <div class="value" id="costos">S/ 0.00</div>
+            <div class="label">📦 Costos</div>
+        </div>
+        <div class="metric">
+            <div class="value" id="ganancia" style="color: #27ae60;">S/ 0.00</div>
+            <div class="label">📈 Ganancia Neta</div>
+        </div>
+        <div class="metric">
+            <div class="value" id="margen">0%</div>
+            <div class="label">📊 Margen</div>
+        </div>
+    </div>
+
+    <div class="grid-2">
+        <div class="card">
+            <h3>📈 Ventas Diarias</h3>
+            <div style="height: 250px;">
+                <canvas id="ventasChart"></canvas>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>🍩 Distribución de Ventas (%)</h3>
+            <div style="height: 250px;">
+                <canvas id="porcentajeChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid-2">
+        <div class="card">
+            <h3>🏆 Top Productos por Rentabilidad</h3>
+            <div style="max-height: 250px; overflow-y: auto;">
+                <table id="rentabilidadTable">
+                    <thead>
+                        <tr>
+                            <th onclick="sortTable(0)" class="sortable">Producto <span class="sort-icon">⇅</span></th>
+                            <th onclick="sortTable(1)" class="sortable">Vendidos <span class="sort-icon">⇅</span></th>
+                            <th onclick="sortTable(2)" class="sortable">Ganancia <span class="sort-icon">⇅</span></th>
+                            <th onclick="sortTable(3)" class="sortable">Margen <span class="sort-icon">⇅</span></th>
+                        </tr>
+                    </thead>
+                    <tbody id="rentabilidadBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>📊 Top Productos Vendidos</h3>
+            <div style="max-height: 250px; overflow-y: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Producto</th>
+                            <th>Unidades</th>
+                            <th>% Ventas</th>
+                        </tr>
+                    </thead>
+                    <tbody id="porcentajeBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>📋 Estado de Resultados (Detalle)</h3>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Producto</th>
+                        <th>Categoría</th>
+                        <th>Cantidad</th>
+                        <th>Precio</th>
+                        <th>Ingreso</th>
+                        <th>Costo</th>
+                        <th>Ganancia</th>
+                    </tr>
+                </thead>
+                <tbody id="detalleBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script>
+    let ventasChart = null;
+    let porcentajeChart = null;
+    let sortDirection = {};
+    let lastSortedColumn = -1;
+
+    function sortTable(columnIndex) {
+        const table = document.getElementById('rentabilidadTable');
+        const tbody = table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const headers = table.querySelectorAll('th');
+
+        if (lastSortedColumn === columnIndex) {
+            sortDirection[columnIndex] = !sortDirection[columnIndex];
+        } else {
+            sortDirection[columnIndex] = true;
+        }
+        lastSortedColumn = columnIndex;
+
+        headers.forEach((th, i) => {
+            th.classList.remove('sorted');
+            th.querySelector('.sort-icon').textContent = '⇅';
+        });
+        headers[columnIndex].classList.add('sorted');
+        headers[columnIndex].querySelector('.sort-icon').textContent = sortDirection[columnIndex] ? '↑' : '↓';
+
+        rows.sort((a, b) => {
+            let aVal = a.cells[columnIndex].textContent.replace(/[S/\s]/g, '').replace(/,/g, '');
+            let bVal = b.cells[columnIndex].textContent.replace(/[S/\s]/g, '').replace(/,/g, '');
+            
+            if (columnIndex === 0) {
+                aVal = a.cells[columnIndex].textContent.toLowerCase();
+                bVal = b.cells[columnIndex].textContent.toLowerCase();
+            } else {
+                aVal = parseFloat(aVal) || 0;
+                bVal = parseFloat(bVal) || 0;
+            }
+
+            if (aVal < bVal) return sortDirection[columnIndex] ? -1 : 1;
+            if (aVal > bVal) return sortDirection[columnIndex] ? 1 : -1;
+            return 0;
+        });
+
+        rows.forEach(row => tbody.appendChild(row));
+    }
+
+    generarReporte();
+
+    async function generarReporte() {
+        const fechaInicio = document.getElementById('fechaInicio').value;
+        const fechaFin = document.getElementById('fechaFin').value;
+        const resultDiv = document.getElementById('reporteResult');
+        const contentDiv = document.getElementById('reportesContent');
+
+        resultDiv.innerHTML = '<p style="color: #667eea;">⏳ Generando reporte...</p>';
+        contentDiv.style.display = 'none';
+
+        try {
+            const response = await fetch('/api/reportes/estado-resultados/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ fecha_inicio: fechaInicio, fecha_fin: fechaFin })
+            });
+
+            const data = await response.json();
+
+            if (data.error) {
+                resultDiv.innerHTML = '<p style="color: #e74c3c;">⚠️ ' + data.error + '</p>';
+                return;
+            }
+
+            document.getElementById('ingresos').textContent = 'S/ ' + data.ingresos.toFixed(2);
+            document.getElementById('costos').textContent = 'S/ ' + data.costos.toFixed(2);
+            document.getElementById('ganancia').textContent = 'S/ ' + data.ganancia_neta.toFixed(2);
+            document.getElementById('margen').textContent = data.margen_porcentaje.toFixed(1) + '%';
+
+            if (data.ganancia_neta < 0) {
+                document.getElementById('ganancia').style.color = '#e74c3c';
+            }
+
+            const tbody = document.getElementById('detalleBody');
+            tbody.innerHTML = '';
+            data.detalle.forEach(d => {
+                tbody.innerHTML += `<tr>
+                <td>${d.producto}</td>
+                <td>${d.categoria || '-'}</td>
+                <td>${d.cantidad.toFixed(1)}</td>
+                <td>S/ ${d.precio}</td>
+                <td>S/ ${d.ingreso.toFixed(2)}</td>
+                <td>S/ ${d.costo.toFixed(2)}</td>
+                <td style="color: ${d.ganancia >= 0 ? '#27ae60' : '#e74c3c'}">S/ ${d.ganancia.toFixed(2)}</td>
+            </tr>`;
+            });
+
+            await cargarGraficoVentas(fechaInicio, fechaFin);
+            await cargarGraficoPorcentaje(fechaInicio, fechaFin);
+            await cargarRentabilidad();
+
+            resultDiv.innerHTML = '';
+            contentDiv.style.display = 'block';
+
+        } catch (error) {
+            resultDiv.innerHTML = '<p style="color: #e74c3c;">⚠️ Error: ' + error.message + '</p>';
+        }
+    }
+
+    async function cargarGraficoVentas(fechaInicio, fechaFin) {
+        try {
+            const response = await fetch(`/api/reportes/ventas-diarias/?fecha_inicio=${fechaInicio}&fecha_fin=${fechaFin}`);
+            const data = await response.json();
+
+            const ctx = document.getElementById('ventasChart').getContext('2d');
+
+            if (ventasChart) ventasChart.destroy();
+
+            ventasChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.fechas,
+                    datasets: [{
+                        label: 'Unidades Vendidas',
+                        data: data.unidades,
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#e2e8f0' }, ticks: { color: '#4a5568' } },
+                        x: { grid: { display: false }, ticks: { color: '#4a5568' } }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('Error en gráfico:', error);
+        }
+    }
+
+    async function cargarGraficoPorcentaje(fechaInicio, fechaFin) {
+        try {
+            const response = await fetch(`/api/reportes/porcentaje/?fecha_inicio=${fechaInicio}&fecha_fin=${fechaFin}`);
+            const data = await response.json();
+
+            const ctx = document.getElementById('porcentajeChart').getContext('2d');
+
+            if (porcentajeChart) porcentajeChart.destroy();
+
+            const colors = ['#667eea', '#764ba2', '#f39c12', '#27ae60', '#e74c3c', '#3498db', '#9b59b6', '#1abc9c', '#e67e22', '#2ecc71'];
+
+            porcentajeChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: data.map(p => p.producto),
+                    datasets: [{
+                        data: data.map(p => p.porcentaje),
+                        backgroundColor: colors.slice(0, data.length),
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'right' }
+                    }
+                }
+            });
+
+            const tbody = document.getElementById('porcentajeBody');
+            tbody.innerHTML = '';
+            data.forEach(p => {
+                tbody.innerHTML += `<tr>
+                <td>${p.producto}</td>
+                <td>${p.unidades}</td>
+                <td>${p.porcentaje}%</td>
+            </tr>`;
+            });
+        } catch (error) {
+            console.error('Error en porcentaje:', error);
+        }
+    }
+
+    async function cargarRentabilidad() {
+        try {
+            const response = await fetch('/api/reportes/rentabilidad/');
+            const data = await response.json();
+
+            const tbody = document.getElementById('rentabilidadBody');
+            tbody.innerHTML = '';
+
+            data.slice(0, 10).forEach(p => {
+                tbody.innerHTML += `<tr>
+                <td>${p.producto}</td>
+                <td>${p.unidades_vendidas}</td>
+                <td style="color: ${p.ganancia >= 0 ? '#27ae60' : '#e74c3c'}">S/ ${p.ganancia.toFixed(2)}</td>
+                <td>${p.margen.toFixed(1)}%</td>
+            </tr>`;
+            });
+        } catch (error) {
+            console.error('Error en rentabilidad:', error);
+        }
+    }
+
+    async function descargarPDF() {
+        const fechaInicio = document.getElementById('fechaInicio').value;
+        const fechaFin = document.getElementById('fechaFin').value;
+
+        const contentDiv = document.getElementById('reportesContent');
+
+        // Capturar gráficos como imágenes
+        let ventasChartImg = '';
+        let porcentajeChartImg = '';
+
+        try {
+            const ventasCanvas = document.getElementById('ventasChart');
+            if (ventasCanvas) {
+                ventasChartImg = ventasCanvas.toDataURL('image/png');
+            }
+
+            const porcentajeCanvas = document.getElementById('porcentajeChart');
+            if (porcentajeCanvas) {
+                porcentajeChartImg = porcentajeCanvas.toDataURL('image/png');
+            }
+        } catch (e) {
+            console.log('Error capturando gráficos:', e);
+        }
+
+        const contenido = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Reporte Financiero - Panadería Victoria</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; padding: 20px; color: #333; }
+        
+        .header {
+            text-align: center;
+            padding: 20px 0;
+            border-bottom: 3px solid #667eea;
+            margin-bottom: 20px;
+        }
+        
+        .header h1 {
+            color: #667eea;
+            font-size: 32px;
+            margin-bottom: 5px;
+        }
+        
+        .header p {
+            color: #888;
+            font-size: 14px;
+        }
+        
+        .periodo {
+            text-align: center;
+            background: #f5f5f5;
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+        
+        .metrics {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 20px;
+        }
+        
+        .metric-box {
+            text-align: center;
+            padding: 15px 30px;
+            background: #f9f9f9;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+        }
+        
+        .metric-box .value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .metric-box .label {
+            font-size: 12px;
+            color: #888;
+        }
+        
+        .charts-section {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .chart-container {
+            flex: 1;
+            text-align: center;
+        }
+        
+        .chart-container img {
+            max-width: 100%;
+            height: auto;
+        }
+        
+        .chart-container h3 {
+            margin-bottom: 10px;
+            color: #555;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            font-size: 12px;
+        }
+        
+        th {
+            background: #667eea;
+            color: white;
+        }
+        
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 10px;
+            color: #888;
+            border-top: 1px solid #ddd;
+            padding-top: 10px;
+        }
+        
+        @media print {
+            body { padding: 0; }
+            .charts-section { flex-wrap: wrap; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header" style="display: flex; align-items: center; justify-content: center; gap: 20px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 70" width="160" height="50">
+            <defs>
+                <linearGradient id="panGradPdf" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" style="stop-color:#d4a574"/>
+                    <stop offset="50%" style="stop-color:#c9956c"/>
+                    <stop offset="100%" style="stop-color:#b8845c"/>
+                </linearGradient>
+            </defs>
+            <rect x="5" y="5" width="55" height="55" rx="12" fill="url(#panGradPdf)"/>
+            <ellipse cx="32" cy="35" rx="20" ry="16" fill="#e8c9a0"/>
+            <ellipse cx="32" cy="32" rx="17" ry="13" fill="#f5deb3"/>
+            <path d="M20 30 Q32 22 44 30" stroke="#c9956c" stroke-width="2" fill="none"/>
+            <path d="M22 36 Q32 28 42 36" stroke="#c9956c" stroke-width="2" fill="none"/>
+            <path d="M24 42 Q32 34 40 42" stroke="#c9956c" stroke-width="2" fill="none"/>
+            <ellipse cx="26" cy="28" rx="4" ry="3" fill="#fff5e6" opacity="0.7"/>
+            <text x="70" y="32" font-family="Arial" font-size="16" font-weight="700" fill="#667eea" letter-spacing="1">VICTORIA</text>
+            <text x="70" y="50" font-family="Arial" font-size="12" font-weight="500" fill="#764ba2" letter-spacing="2">PANADERÍA</text>
+        </svg>
+        <div>
+            <h1 style="margin: 0; font-size: 22px; color: #667eea;">Reportes Financieros</h1>
+            <p style="margin: 5px 0 0 0; font-size: 13px; color: #888;">Sistema de Gestión Predictiva</p>
+        </div>
+    </div>
+    
+    <div class="periodo">
+        <strong>Período:</strong> ${fechaInicio} al ${fechaFin}
+    </div>
+    
+    <div class="metrics">
+        <div class="metric-box">
+            <div class="value">${document.getElementById('ingresos').textContent}</div>
+            <div class="label">💰 Ingresos</div>
+        </div>
+        <div class="metric-box">
+            <div class="value">${document.getElementById('costos').textContent}</div>
+            <div class="label">📦 Costos</div>
+        </div>
+        <div class="metric-box">
+            <div class="value" style="color: ${document.getElementById('ganancia').style.color || '#27ae60'}">${document.getElementById('ganancia').textContent}</div>
+            <div class="label">📈 Ganancia</div>
+        </div>
+        <div class="metric-box">
+            <div class="value">${document.getElementById('margen').textContent}</div>
+            <div class="label">📊 Margen</div>
+        </div>
+    </div>
+    
+    <div class="charts-section">
+        <div class="chart-container">
+            <h3>📈 Ventas Diarias</h3>
+            ${ventasChartImg ? `<img src="${ventasChartImg}" alt="Gráfico de ventas">` : '<p>Sin datos</p>'}
+        </div>
+        <div class="chart-container">
+            <h3>🍩 Distribución de Ventas</h3>
+            ${porcentajeChartImg ? `<img src="${porcentajeChartImg}" alt="Gráfico de porcentaje">` : '<p>Sin datos</p>'}
+        </div>
+    </div>
+    
+    <h3>📋 Detalle de Ventas</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Producto</th>
+                <th>Categoría</th>
+                <th>Cantidad</th>
+                <th>Precio</th>
+                <th>Ingreso</th>
+                <th>Costo</th>
+                <th>Ganancia</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${document.getElementById('detalleBody').innerHTML}
+        </tbody>
+    </table>
+    
+    <div class="footer">
+        Reporte generado automáticamente por el Sistema de Panadería Victoria | ${new Date().toLocaleDateString()}
+    </div>
+</body>
+</html>`;
+
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(contenido);
+        printWindow.document.close();
+
+        setTimeout(() => {
+            printWindow.print();
+        }, 500);
+    }
+</script>
+{% endblock %}

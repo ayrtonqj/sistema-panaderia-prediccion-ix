@@ -1,0 +1,50 @@
+{
+  "producto_id": 14,
+  "producto_nombre": "Alfajor",
+  "mejor_algoritmo": "Linear Regression",
+  "rmse": 3.86,
+  "mae": 3.12,
+  "r2": 0.6371,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 3.3,
+      "rmse": 4.31,
+      "r2": 0.5466
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 3.12,
+      "rmse": 3.86,
+      "r2": 0.6371
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 4.0,
+      "rmse": 5.71,
+      "r2": 0.2052
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 5.6,
+      "rmse": 6.6,
+      "r2": -0.0633
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 3.6,
+      "rmse": 4.39,
+      "r2": 0.5299
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 3.11,
+      "rmse": 3.86,
+      "r2": 0.6368
+    }
+  ]
+}

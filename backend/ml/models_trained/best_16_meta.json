@@ -1,0 +1,50 @@
+{
+  "producto_id": 16,
+  "producto_nombre": "Empanada de Pollo",
+  "mejor_algoritmo": "Linear Regression",
+  "rmse": 9.2,
+  "mae": 5.71,
+  "r2": 0.3283,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 5.81,
+      "rmse": 9.26,
+      "r2": 0.3203
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 5.71,
+      "rmse": 9.2,
+      "r2": 0.3283
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 6.24,
+      "rmse": 9.69,
+      "r2": 0.2545
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 9.06,
+      "rmse": 11.39,
+      "r2": -0.0285
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 6.44,
+      "rmse": 9.33,
+      "r2": 0.309
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 5.85,
+      "rmse": 9.36,
+      "r2": 0.3057
+    }
+  ]
+}

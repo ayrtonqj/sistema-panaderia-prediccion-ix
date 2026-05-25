@@ -1,0 +1,50 @@
+{
+  "producto_id": 18,
+  "producto_nombre": "Empanada de Queso",
+  "mejor_algoritmo": "MLP Neural Network",
+  "rmse": 9.79,
+  "mae": 6.28,
+  "r2": 0.1276,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 5.39,
+      "rmse": 9.85,
+      "r2": 0.1177
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 5.96,
+      "rmse": 10.66,
+      "r2": -0.0337
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 6.18,
+      "rmse": 11.62,
+      "r2": -0.2292
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 8.84,
+      "rmse": 11.01,
+      "r2": -0.1024
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 6.28,
+      "rmse": 9.79,
+      "r2": 0.1276
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 5.43,
+      "rmse": 10.58,
+      "r2": -0.0182
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "producto_id": 1,
+  "producto_nombre": "Pan Frances",
+  "mejor_algoritmo": "Gradient Boosting",
+  "rmse": 159.26,
+  "mae": 65.54,
+  "r2": 0.0062,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 63.95,
+      "rmse": 161.94,
+      "r2": -0.0275
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 61.33,
+      "rmse": 160.82,
+      "r2": -0.0134
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 65.54,
+      "rmse": 159.26,
+      "r2": 0.0062
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 79.27,
+      "rmse": 159.87,
+      "r2": -0.0014
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 67.73,
+      "rmse": 164.98,
+      "r2": -0.0664
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 63.03,
+      "rmse": 162.15,
+      "r2": -0.0301
+    }
+  ]
+}

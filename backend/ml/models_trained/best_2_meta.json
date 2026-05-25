@@ -1,0 +1,50 @@
+{
+  "producto_id": 2,
+  "producto_nombre": "Pan Integral",
+  "mejor_algoritmo": "MLP Neural Network",
+  "rmse": 15.8,
+  "mae": 11.22,
+  "r2": 0.5162,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 13.48,
+      "rmse": 21.88,
+      "r2": 0.072
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 12.76,
+      "rmse": 22.68,
+      "r2": 0.0033
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 16.6,
+      "rmse": 28.47,
+      "r2": -0.5704
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 19.81,
+      "rmse": 24.43,
+      "r2": -0.1561
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 11.22,
+      "rmse": 15.8,
+      "r2": 0.5162
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 12.31,
+      "rmse": 22.71,
+      "r2": 0.0007
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "producto_id": 6,
+  "producto_nombre": "Torta de Cumplea\u00f1os",
+  "mejor_algoritmo": "SARIMA",
+  "rmse": 16.08,
+  "mae": 3.42,
+  "r2": -0.032,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 3.51,
+      "rmse": 16.17,
+      "r2": -0.0434
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 3.5,
+      "rmse": 16.17,
+      "r2": -0.0441
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 3.5,
+      "rmse": 16.18,
+      "r2": -0.0452
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 3.42,
+      "rmse": 16.08,
+      "r2": -0.032
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 3.76,
+      "rmse": 16.23,
+      "r2": -0.0515
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 3.5,
+      "rmse": 16.19,
+      "r2": -0.0461
+    }
+  ]
+}

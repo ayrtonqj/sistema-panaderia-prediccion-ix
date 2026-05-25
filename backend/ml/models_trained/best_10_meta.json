@@ -1,0 +1,50 @@
+{
+  "producto_id": 10,
+  "producto_nombre": "Pan Ciabatta",
+  "mejor_algoritmo": "Ensemble (RF+GB+LR)",
+  "rmse": 1.7,
+  "mae": 1.41,
+  "r2": 0.8448,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 1.4,
+      "rmse": 1.71,
+      "r2": 0.8426
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 1.52,
+      "rmse": 1.84,
+      "r2": 0.8174
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 1.65,
+      "rmse": 1.94,
+      "r2": 0.7976
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 3.88,
+      "rmse": 4.32,
+      "r2": -0.0022
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 1.5,
+      "rmse": 1.84,
+      "r2": 0.8171
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 1.41,
+      "rmse": 1.7,
+      "r2": 0.8448
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "producto_id": 15,
+  "producto_nombre": "Empanada de Manzana",
+  "mejor_algoritmo": "Linear Regression",
+  "rmse": 2.83,
+  "mae": 2.15,
+  "r2": 0.8266,
+  "todos_resultados": [
+    {
+      "algoritmo": "Random Forest",
+      "mae": 2.45,
+      "rmse": 3.16,
+      "r2": 0.7836
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "mae": 2.15,
+      "rmse": 2.83,
+      "r2": 0.8266
+    },
+    {
+      "algoritmo": "Gradient Boosting",
+      "mae": 3.48,
+      "rmse": 4.52,
+      "r2": 0.5574
+    },
+    {
+      "algoritmo": "SARIMA",
+      "mae": 6.5,
+      "rmse": 7.01,
+      "r2": -0.0662
+    },
+    {
+      "algoritmo": "Prophet",
+      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+    },
+    {
+      "algoritmo": "MLP Neural Network",
+      "mae": 2.48,
+      "rmse": 3.27,
+      "r2": 0.768
+    },
+    {
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "mae": 2.54,
+      "rmse": 3.21,
+      "r2": 0.7767
+    }
+  ]
+}
