@@ -1,10 +1,18 @@
 {
   "producto_id": 6,
   "producto_nombre": "Torta de Cumplea\u00f1os",
-  "mejor_algoritmo": "SARIMA",
+  "mejor_algoritmo": "ARIMA",
   "rmse": 16.08,
-  "mae": 3.42,
-  "r2": -0.032,
+  "mae": 3.41,
+  "r2": -0.0319,
+  "modelos_guardados": {
+    "random_forest": "Random Forest",
+    "linear_regression": "Linear Regression",
+    "gradient_boosting": "Gradient Boosting",
+    "arima": "ARIMA",
+    "mlp_neural_network": "MLP Neural Network",
+    "ensemble_rfplusgbpluslr": "Ensemble (RF+GB+LR)"
+  },
   "todos_resultados": [
     {
       "algoritmo": "Random Forest",
@@ -25,10 +33,10 @@
       "r2": -0.0452
     },
     {
-      "algoritmo": "SARIMA",
-      "mae": 3.42,
+      "algoritmo": "ARIMA",
+      "mae": 3.41,
       "rmse": 16.08,
-      "r2": -0.032
+      "r2": -0.0319
     },
     {
       "algoritmo": "Prophet",

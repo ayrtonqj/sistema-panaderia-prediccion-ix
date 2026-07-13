@@ -5,6 +5,14 @@
   "rmse": 12.85,
   "mae": 8.56,
   "r2": 0.4364,
+  "modelos_guardados": {
+    "random_forest": "Random Forest",
+    "linear_regression": "Linear Regression",
+    "gradient_boosting": "Gradient Boosting",
+    "arima": "ARIMA",
+    "mlp_neural_network": "MLP Neural Network",
+    "ensemble_rfplusgbpluslr": "Ensemble (RF+GB+LR)"
+  },
   "todos_resultados": [
     {
       "algoritmo": "Random Forest",
@@ -25,10 +33,10 @@
       "r2": 0.3153
     },
     {
-      "algoritmo": "SARIMA",
-      "mae": 15.07,
-      "rmse": 17.62,
-      "r2": -0.06
+      "algoritmo": "ARIMA",
+      "mae": 14.87,
+      "rmse": 17.46,
+      "r2": -0.041
     },
     {
       "algoritmo": "Prophet",

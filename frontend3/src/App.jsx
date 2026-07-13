@@ -12,8 +12,12 @@ import PrediccionesPage from './pages/PrediccionesPage'
 import ControlPerdidasPage from './pages/ControlPerdidasPage'
 import VendedoresPage from './pages/VendedoresPage'
 import OrdenesCompraPage from './pages/OrdenesCompraPage'
+import ProveedoresPage from './pages/ProveedoresPage'
 import ReportesFinancierosPage from './pages/ReportesFinancierosPage'
 import ModeloEstadisticoPage from './pages/ModeloEstadisticoPage'
+import AnomaliasPage from './pages/AnomaliasPage'
+import PodiosPage from './pages/PodiosPage'
+import NotificacionesPage from './pages/NotificacionesPage'
 
 import SecurityPage from './pages/SecurityPage'
 import './App.css'
@@ -21,7 +25,8 @@ import './App.css'
 function App() {
   const { user, debeConfigurar2fa } = useAuth()
   const [currentPage, setCurrentPage] = useState(() => {
-    return debeConfigurar2fa ? 'seguridad' : 'dashboard'
+    const saved = localStorage.getItem('currentPage')
+    return debeConfigurar2fa ? 'seguridad' : saved || 'dashboard'
   })
   const [darkMode, setDarkMode] = useState(() => {
     return localStorage.getItem('theme') === 'dark'
@@ -35,10 +40,15 @@ function App() {
     inventario: ['administrador','gerente','vendedor','cocina'],
     vendedores: ['administrador','gerente'],
     ordenes_compra: ['administrador','gerente'],
+    proveedores: ['administrador','gerente'],
+
     predicciones: ['administrador','gerente'],
     control_perdidas: ['administrador','gerente'],
     reportes_financieros: ['administrador','gerente'],
     modelo_estadistico: ['administrador'],
+    anomalias: ['administrador'],
+    podios: ['administrador','gerente','vendedor'],
+    notificaciones: ['administrador'],
     seguridad: ['administrador','gerente','vendedor','cocina'],
   }
 
@@ -46,12 +56,17 @@ function App() {
     const allowed = PAGE_ROLES[page]
     if (allowed && !allowed.includes(user.rol)) return
     setCurrentPage(page)
+    localStorage.setItem('currentPage', page)
   }
 
   useEffect(() => {
     document.body.classList.toggle('dark-mode', darkMode)
     localStorage.setItem('theme', darkMode ? 'dark' : 'light')
   }, [darkMode])
+
+  useEffect(() => {
+    localStorage.setItem('currentPage', currentPage)
+  }, [currentPage])
 
   // Forzar a configuración 2FA si es necesario
   useEffect(() => {
@@ -77,8 +92,12 @@ function App() {
       case 'predicciones': return <PrediccionesPage />
       case 'control_perdidas': return <ControlPerdidasPage />
       case 'ordenes_compra': return <OrdenesCompraPage />
+      case 'proveedores': return <ProveedoresPage />
       case 'reportes_financieros': return <ReportesFinancierosPage />
       case 'modelo_estadistico': return <ModeloEstadisticoPage />
+      case 'anomalias': return <AnomaliasPage />
+      case 'podios': return <PodiosPage />
+      case 'notificaciones': return <NotificacionesPage />
       case 'seguridad': return <SecurityPage />
       default: return currentPage === 'seguridad' ? <SecurityPage /> : <DashboardPage />
     }

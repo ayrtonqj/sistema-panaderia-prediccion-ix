@@ -26,6 +26,7 @@ if sys.stdout.encoding and sys.stdout.encoding.upper() not in ("UTF-8", "UTF8"):
         import io
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
+from datetime import date, timedelta
 import json
 import joblib
 import numpy as np
@@ -45,10 +46,13 @@ def cargar_datos_desde_db():
     """Carga ventas y clima desde PostgreSQL como DataFrames."""
     db = SessionLocal()
     try:
+        desde = date.today() - timedelta(days=60)
         ventas = db.query(
             db_models.FactVenta.producto_id,
             db_models.FactVenta.fecha,
             db_models.FactVenta.cantidad_vendida,
+        ).filter(
+            db_models.FactVenta.fecha >= desde
         ).all()
         df_ventas = pd.DataFrame(ventas, columns=["producto_id", "fecha", "cantidad_vendida"])
 
@@ -135,6 +139,10 @@ def entrenar_y_comparar_todos():
                     "r2": metricas["r2"],
                 })
 
+                safe_name = algo_nombre.lower().replace(" ", "_").replace("(", "").replace(")", "").replace("+", "plus")
+                algo_path = os.path.join(MODELS_DIR, f"model_{safe_name}_{pid}.pkl")
+                joblib.dump(modelo.model, algo_path)
+
                 print(f"MAE={metricas['mae']} RMSE={metricas['rmse']} R2={metricas['r2']}")
 
                 if metricas["rmse"] < mejor_rmse:
@@ -155,6 +163,13 @@ def entrenar_y_comparar_todos():
             model_path = os.path.join(MODELS_DIR, f"best_{pid}.pkl")
             meta_path = os.path.join(MODELS_DIR, f"best_{pid}_meta.json")
 
+            modelos_guardados = {}
+            for r in resultados_modelos:
+                if "error" not in r:
+                    algo = r["algoritmo"]
+                    safe = algo.lower().replace(" ", "_").replace("(", "").replace(")", "").replace("+", "plus")
+                    modelos_guardados[safe] = algo
+
             joblib.dump(mejor_modelo_obj.model, model_path)
             with open(meta_path, "w") as f:
                 json.dump({
@@ -168,6 +183,7 @@ def entrenar_y_comparar_todos():
                     "r2": round(
                         next((r["r2"] for r in resultados_modelos if r.get("algoritmo") == mejor_nombre and "r2" in r), 0), 4
                     ),
+                    "modelos_guardados": modelos_guardados,
                     "todos_resultados": resultados_modelos,
                 }, f, indent=2, default=str)
 

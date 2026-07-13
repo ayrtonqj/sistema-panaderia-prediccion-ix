@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/api'
 import Pagination from '../components/Pagination'
-import { openPrintWindow, tableHeaderHtml } from '../utils/pdf'
+import { openPrintWindow, tableHeaderHtml, descargarExcel, enviarPorCorreo } from '../utils/pdf'
 
 function estadoDias(dias) {
   if (dias === null || dias === undefined) return { label: 'Sin registro', color: '#95a5a6', icon: '⚪' }
@@ -111,12 +111,16 @@ export default function CatalogoPage() {
 
   return (
     <>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
         <div>
           <h1>📦 Catálogo de Productos</h1>
           <p style={{ color: '#8892a4' }}>Administra los productos que vendes</p>
         </div>
-        <button className="btn btn-danger" onClick={generarPDF}>📄 Descargar PDF</button>
+        <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+        <button className="btn btn-danger" onClick={generarPDF} style={{ fontSize: '11px', padding: '3px 8px', flexShrink: 0 }}>📄 PDF</button>
+        <button className="btn" onClick={() => enviarPorCorreo('Catálogo de Productos', ['ID', 'Nombre', 'Categoría', 'Precio', 'Costo', 'Margen'], (productos || []).map(p => [p.id, p.nombre, p.categoria, 'S/ ' + p.precio, 'S/ ' + p.costo, p.margen_pct + '%']))} style={{ fontSize: '11px', padding: '3px 8px', background: '#e74c3c', color: '#fff', flexShrink: 0 }}>📧 Enviar</button>
+        <button className="btn" onClick={() => descargarExcel('Catalogo', [{ key: "id", label: "ID" }, { key: "nombre", label: "Nombre" }, { key: "categoria", label: "Categoria" }, { key: "precio", label: "Precio", render: (i) => "S/ " + i.precio.toFixed(2) }, { key: "costo", label: "Costo", render: (i) => "S/ " + i.costo.toFixed(2) }, { key: "margen_pct", label: "Margen %" }], productos)} style={{ fontSize: '11px', padding: '3px 8px', background: '#27ae60', color: '#fff', flexShrink: 0 }}>📊 Excel</button>
+        </div>
       </div>
 
       <div className="card">
@@ -140,7 +144,7 @@ export default function CatalogoPage() {
         {result && <p style={{ marginTop: '10px', color: result.includes('✅') ? '#27ae60' : '#e74c3c' }}>{result}</p>}
       </div>
 
-      <div className="card">
+      <div className="card" id="CatalogoPageTable">
         <h3>Productos Registrados {!loading && <span style={{ fontSize: '14px', color: '#8892a4', fontWeight: 400 }}>({productos.length})</span>}</h3>
         {loading ? <p>Cargando...</p> : (
           <Pagination

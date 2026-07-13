@@ -11,7 +11,13 @@ DATABASE_URL = os.getenv(
     "postgresql://eduardo:123456@localhost:5432/panaderia_victoria"
 )
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    pool_size=10,
+    max_overflow=20,
+)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

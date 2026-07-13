@@ -475,7 +475,7 @@ export default function LoginPage() {
       padding: '20px',
       fontFamily: "'Poppins', sans-serif",
     }}>
-      <div style={{
+      <div className="login-card" style={{
         display: 'flex',
         background: 'white',
         borderRadius: '20px',

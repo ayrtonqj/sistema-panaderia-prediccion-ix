@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { api } from '../api/api'
+import { descargarExcel, enviarPorCorreo } from '../utils/pdf'
 import { Line, Doughnut } from 'react-chartjs-2'
 import { Chart, CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Title, Tooltip, Legend, Filler } from 'chart.js'
 import { formatDateFull, formatDateShort } from '../utils/formatters'
@@ -87,7 +88,7 @@ export default function ReportesFinancierosPage() {
     }],
   } : null
 
-  const descargarPDF = () => {
+  const descargarPDFLocal = () => {
     const ventasCanvas = document.getElementById('ventasChartCanvas')
     const porcentajeCanvas = document.getElementById('porcentajeChartCanvas')
     let ventasChartImg = ''
@@ -167,8 +168,12 @@ export default function ReportesFinancierosPage() {
             </div>
           </div>
           <button className="btn" onClick={generarReporte}>📊 Generar Reporte</button>
-          {reportData && <button className="btn" onClick={descargarPDF}>📄 Descargar PDF</button>}
-        </div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px', alignItems: 'center', alignSelf: 'center' }}>
+            {reportData && <button className="btn btn-danger" onClick={descargarPDFLocal} style={{ fontSize: '11px', padding: '3px 8px', flexShrink: 0 }}>📄 PDF</button>}
+            {reportData && <button className="btn" onClick={() => enviarPorCorreo('Reporte Financiero', ['Producto', 'Categoría', 'Cantidad', 'Ingreso', 'Costo', 'Ganancia'], (reportData?.detalle || []).map(d => [d.producto, d.categoria || '-', d.cantidad, 'S/ ' + (d.ingreso || 0).toFixed(2), 'S/ ' + (d.costo || 0).toFixed(2), 'S/ ' + (d.ganancia || 0).toFixed(2)]))} style={{ fontSize: '11px', padding: '3px 8px', background: '#e74c3c', color: '#fff', flexShrink: 0 }}>📧 Enviar</button>}
+            <button className="btn" onClick={() => descargarExcel("ReporteFinanciero", [{ key: "nombre", label: "Producto" }, { key: "ingresos", label: "Ingresos" }, { key: "costos", label: "Costos" }, { key: "margen", label: "Margen" }], reportData?.por_categoria || [])} style={{ fontSize: '11px', padding: '3px 8px', background: '#27ae60', color: '#fff', flexShrink: 0 }}>📊 Excel</button>
+          </div>
+</div>
       </div>
 
       {loading && (
@@ -189,7 +194,7 @@ export default function ReportesFinancierosPage() {
 
       {reportData && !loading && (
         <>
-          <div className="grid-4">
+          <div className="grid-4" id="reporteTable">
             <div className="metric">
               <div className="value" id="ingresosVal">S/ {(reportData.ingresos || 0).toFixed(2)}</div>
               <div className="label">💰 Ingresos</div>

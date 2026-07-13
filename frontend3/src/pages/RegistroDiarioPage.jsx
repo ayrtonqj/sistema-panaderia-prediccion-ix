@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/api'
 import Pagination from '../components/Pagination'
-import { openPrintWindow, tableHeaderHtml } from '../utils/pdf'
+import { openPrintWindow, tableHeaderHtml, descargarExcel, enviarPorCorreo } from '../utils/pdf'
 import { formatDateShort } from '../utils/formatters'
 import { useNav } from '../context/NavContext'
 
@@ -26,6 +26,8 @@ export default function RegistroDiarioPage() {
   const [loadingPendientes, setLoadingPendientes] = useState(false)
   const [pendientesValores, setPendientesValores] = useState({})
   const [toast, setToast] = useState(null)
+  const [panPasadoItems, setPanPasadoItems] = useState([])
+  const [ppLoading, setPpLoading] = useState(false)
 
   const cargarDatos = async () => {
     try {
@@ -56,6 +58,23 @@ export default function RegistroDiarioPage() {
 
   useEffect(() => { cargarDatos() }, [])
   useEffect(() => { if (!toast) return; const id = setTimeout(() => setToast(null), 3000); return () => clearTimeout(id) }, [toast])
+
+  const cargarPanPasado = async () => {
+    setPpLoading(true)
+    try {
+      await api.post('/pan-pasado/auto-generar?dias=3', {}).catch(() => {})
+      const pp = await api.get('/pan-pasado/disponible').catch(() => [])
+      setPanPasadoItems(Array.isArray(pp) ? pp : [])
+    } catch {} finally { setPpLoading(false) }
+  }
+
+  const venderPanPasado = async (ppId, cantidad) => {
+    try {
+      const data = await api.post(`/pan-pasado/${ppId}/vender`, { cantidad_vender: cantidad })
+      setToast({ tipo: 'ok', msg: `✅ ${data.mensaje} — S/ ${data.total_soles.toFixed(2)}` })
+      cargarPanPasado()
+    } catch { setToast({ tipo: 'error', msg: '❌ Error al vender pan' }) }
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -173,13 +192,14 @@ export default function RegistroDiarioPage() {
 
   return (
     <>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h1>📝 Registro Diario de Producción</h1>
-          <p style={{ color: '#8892a4' }}>Registra la cantidad producida del día</p>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}><div>
+          <h1>📝 Registro Diario de Producción</h1><p style={{ color: '#8892a4' }}>Registra la cantidad producida del día</p>
+        </div><div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+        <button className="btn btn-danger" onClick={generarPDF} style={{ fontSize: '11px', padding: '3px 8px', flexShrink: 0 }}>📄 PDF</button>
+        <button className="btn" onClick={() => enviarPorCorreo('Registro Diario de Producción', ['ID', 'Producto', 'Fecha', 'Producido'], (produccion || []).map(r => [r.id, r.producto_nombre, r.fecha, r.cantidad_producida]))} style={{ fontSize: '11px', padding: '3px 8px', background: '#e74c3c', color: '#fff', flexShrink: 0 }}>📧 Enviar</button>
+        <button className="btn" onClick={() => descargarExcel('Produccion', [{ key: "id", label: "ID" }, { key: "producto_nombre", label: "Producto" }, { key: "fecha", label: "Fecha", render: (i) => formatDateShort(i.fecha) }, { key: "cantidad_producida", label: "Producido" }], produccion)} style={{ fontSize: '11px', padding: '3px 8px', background: '#27ae60', color: '#fff', flexShrink: 0 }}>📊 Excel</button>
         </div>
-        <button className="btn btn-danger" onClick={generarPDF}>📄 Descargar PDF</button>
-      </div>
+</div>
 
       <div className="card" style={{ padding: '8px 15px', marginBottom: '20px' }}>
         <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
@@ -306,6 +326,12 @@ export default function RegistroDiarioPage() {
             background: tabSec === 'historial' ? '#667eea' : 'transparent',
             color: tabSec === 'historial' ? '#fff' : '#4a5568', transition: 'all 0.2s',
           }}>📋 Historial de Producción</button>
+          <button onClick={() => { setTabSec('pan_pasado'); cargarPanPasado() }} style={{
+            padding: '8px 20px', border: 'none', borderRadius: '6px', cursor: 'pointer',
+            fontWeight: tabSec === 'pan_pasado' ? '700' : '400',
+            background: tabSec === 'pan_pasado' ? '#667eea' : 'transparent',
+            color: tabSec === 'pan_pasado' ? '#fff' : '#4a5568', transition: 'all 0.2s',
+          }}>🥖 Pan del Día Anterior</button>
         </div>
       </div>
 
@@ -371,6 +397,52 @@ export default function RegistroDiarioPage() {
               )}
             />
           </div>
+        </div>
+      )}
+
+      {tabSec === 'pan_pasado' && (
+        <div className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+            <h3 style={{ margin: 0 }}>🥖 Pan del Día Anterior</h3>
+            <button className="btn" style={{ fontSize: '12px', padding: '6px 14px' }} onClick={cargarPanPasado}>🔄 Actualizar</button>
+          </div>
+          <p style={{ color: '#8892a4', fontSize: '13px', marginBottom: '15px' }}>
+            Pan no vendido recuperado automáticamente al registrar producción. Se vende a <strong>costo × 1.10</strong> (10% ganancia). El pan que pasa más de 7 días se convierte en merma.
+          </p>
+          {ppLoading ? (
+            <p style={{ color: '#8892a4' }}>Cargando...</p>
+          ) : panPasadoItems.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '20px', color: '#8892a4' }}>
+              <p>🥖 No hay pan recuperado disponible en este momento.</p>
+              <p style={{ fontSize: '13px' }}>Al registrar producción de panes, el excedente aparece aquí automáticamente.</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {panPasadoItems.map(pp => {
+                const disp = pp.cantidad - (pp.cantidad_vendida || 0)
+                return (
+                  <div key={pp.id} style={{
+                    display: 'flex', alignItems: 'center', gap: '12px',
+                    padding: '10px 14px', borderRadius: '8px',
+                    border: '1px solid var(--border-color)', background: 'var(--bg-card)',
+                  }}>
+                    <span style={{ fontSize: '24px' }}>🥖</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>{pp.producto_nombre}</div>
+                      <div style={{ fontSize: '12px', color: '#8892a4' }}>
+                        {disp} disponibles · S/ {pp.precio_unitario.toFixed(2)} c/u
+                      </div>
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: '16px', color: '#e67e22', minWidth: '70px', textAlign: 'right' }}>
+                      S/ {(disp * pp.precio_unitario).toFixed(2)}
+                    </div>
+                    <button className="btn" style={{ padding: '6px 14px', fontSize: '12px', background: '#e67e22', color: '#fff' }}
+                      onClick={() => venderPanPasado(pp.id, disp)}>Vender {disp} uds</button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 

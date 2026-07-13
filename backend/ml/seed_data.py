@@ -91,7 +91,46 @@ INSUMOS = [
 PROVEEDORES = [
     {"nombre": "Molinos del Norte SAC", "contacto": "Juan Pérez",   "telefono": "044-123456", "email": "ventas@molinosnorte.com"},
     {"nombre": "Distribuidora Lácteos La Victoria", "contacto": "María García", "telefono": "044-654321", "email": "pedidos@lacteoslavictoria.com"},
-    {"nombre": "Agropecuaria Los Andes", "contacto": "Carlos Ruiz",  "telefono": "044-111222", "email": "carlos@losandes.pe"},
+    {"nombre": "Insumos del Norte EIRL", "contacto": "Roberto Sánchez", "telefono": "044-333444", "email": "ventas@insumosnorte.com"},
+    {"nombre": "Distribuidora de Abastos El Panadero", "contacto": "Lucía Torres", "telefono": "044-555666", "email": "pedidos@elpanadero.pe"},
+    {"nombre": "Distribuidora de Huevos San Miguel", "contacto": "Pedro Huamán", "telefono": "044-777888", "email": "ventas@sanjuanhuevos.pe"},
+    {"nombre": "Corporación del Norte SAC", "contacto": "Miguel Ángel Ríos", "telefono": "044-222333", "email": "compras@corporacionnorte.pe"},
+]
+
+# ── Precios por proveedor por insumo ──────────────────────────────────────────
+# (proveedor_idx, insumo_idx, precio_unitario)
+# Insumos: 0=Harina, 1=Azúcar, 2=Mantequilla, 3=Levadura, 4=Huevos, 5=Leche, 6=Sal
+PRECIOS_PROVEEDORES = [
+    # Harina (3 proveedores)
+    (0, 0, 2.80),                                                    # Molinos del Norte: Harina
+    (2, 0, 2.60),                                                    # Insumos del Norte: Harina
+    (5, 0, 2.70),                                                    # Corp. del Norte: Harina
+
+    # Azúcar (3 proveedores)
+    (1, 1, 3.50),                                                    # Lácteos: Azúcar
+    (2, 1, 3.20),                                                    # Insumos del Norte: Azúcar
+    (5, 1, 3.30),                                                    # Corp. del Norte: Azúcar
+
+    # Mantequilla (3 proveedores)
+    (1, 2, 14.00),                                                   # Lácteos: Mantequilla
+    (3, 2, 13.50),                                                   # El Panadero: Mantequilla
+    (5, 2, 13.80),                                                   # Corp. del Norte: Mantequilla
+
+    # Levadura (2 proveedores)
+    (2, 3, 8.80),                                                    # Insumos del Norte: Levadura
+    (3, 3, 9.00),                                                    # El Panadero: Levadura
+
+    # Huevos (2 proveedores)
+    (3, 4, 0.55),                                                    # El Panadero: Huevos
+    (4, 4, 0.50),                                                    # San Miguel: Huevos
+
+    # Leche (3 proveedores)
+    (1, 5, 5.20),                                                    # Lácteos: Leche
+    (3, 5, 4.90),                                                    # El Panadero: Leche
+    (5, 5, 5.00),                                                    # Corp. del Norte: Leche
+
+    # Sal (1 proveedor)
+    (2, 6, 1.30),                                                    # Insumos del Norte: Sal
 ]
 
 # ── Recetas (fichas técnicas) ────────────────────────────────────────────────
@@ -216,11 +255,13 @@ def run_seed():
         insumos_db = []
         for i, ins in enumerate(INSUMOS):
             # Asignar proveedor principal según tipo de insumo
-            prov_id = proveedores_db[0].id  # Molinos del Norte para harina
+            prov_id = proveedores_db[0].id  # Molinos del Norte (default)
             if i in [1, 2, 5]:  # azúcar, mantequilla, leche → lácteos
                 prov_id = proveedores_db[1].id
-            if i in [4]:  # huevos → agropecuaria
+            if i in [3, 6]:  # levadura, sal → insumos del norte (más barato)
                 prov_id = proveedores_db[2].id
+            if i in [4]:  # huevos → san miguel (más barato)
+                prov_id = proveedores_db[4].id
 
             insumo = models.InsumoCritico(
                 nombre=ins["nombre"],
@@ -233,7 +274,18 @@ def run_seed():
             insumos_db.append(insumo)
         db.flush()
 
-        # ── 4. Fichas técnicas (recetas) ──────────────────────────────────
+        # ── 4. Precios por proveedor ──────────────────────────────────────
+        print("  -> Insertando precios por proveedor...")
+        for prov_idx, ins_idx, precio in PRECIOS_PROVEEDORES:
+            pi = models.ProveedorInsumo(
+                proveedor_id=proveedores_db[prov_idx].id,
+                insumo_id=insumos_db[ins_idx].id,
+                precio_unitario=precio,
+            )
+            db.add(pi)
+        db.flush()
+
+        # ── 5. Fichas técnicas (recetas) ──────────────────────────────────
         print("  -> Insertando fichas tecnicas (recetas)...")
         for prod_idx, ingredientes in RECETAS.items():
             for insumo_idx, cantidad in ingredientes:
@@ -244,7 +296,7 @@ def run_seed():
                 )
                 db.add(ficha)
 
-        # ── 5. Datos históricos (365 días + 15 días de futuro para clima) ──
+        # ── 6. Datos históricos (365 días + 15 días de futuro para clima) ──
         fecha_inicio = date.today() - timedelta(days=365)
         fecha_fin_datos = date.today()
         fecha_fin_clima = date.today() + timedelta(days=15)
@@ -257,6 +309,7 @@ def run_seed():
         print(f"  -> Generando datos ({fecha_inicio} -> {fecha_fin_clima})...")
 
         fecha = fecha_inicio
+        dias_contador = 0
         while fecha <= fecha_fin_clima:
             # Clima siempre se genera (pasado y futuro)
             clima = clima_dia(fecha)
@@ -302,6 +355,9 @@ def run_seed():
                         mermas_total += 1
 
             fecha += delta
+            dias_contador += 1
+            if dias_contador % 30 == 0:
+                db.flush()
 
         db.commit()
 

@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../api/api'
+import { descargarExcel } from '../utils/pdf'
 import { useAuth } from '../context/AuthContext'
 import { useNav } from '../context/NavContext'
 import { generarFacturaHTML, getNextInvoiceNumber, openPrintWindow, numeroALetras } from '../utils/pdf'
@@ -39,7 +40,12 @@ export default function VentaRapidaPage() {
   const [sugerencias, setSugerencias] = useState([])
   const [produccionHoy, setProduccionHoy] = useState([])
   const [metodoPago, setMetodoPago] = useState('efectivo')
-  const [montoRecibido, setMontoRecibido] = useState('')
+  const [panPasado, setPanPasado] = useState([])
+  const [ppCantidades, setPpCantidades] = useState({})
+  const [ppExpandido, setPpExpandido] = useState(false)
+  const scrollRef = useRef(null)
+  const scrollPos = useRef(0)
+  const [condiciones, setCondiciones] = useState(null)
 
   useEffect(() => {
     if (!user?.vendedor_id) { setVendedorNombre(''); setVendedorDni(''); return }
@@ -55,23 +61,44 @@ export default function VentaRapidaPage() {
   }, [user])
 
   const cargarDatos = useCallback(async () => {
+    scrollPos.current = scrollRef.current?.scrollTop || 0
     try {
-      const [prods, hoy, sug, prodHoy] = await Promise.all([
+      const [prods, hoy, sug, prodHoy, pp, cond] = await Promise.all([
         api.get('/productos/'),
         api.get('/ventas/hoy'),
         api.get('/produccion/sugerida').catch(() => null),
         api.get('/produccion/hoy'),
+        api.get('/pan-pasado/disponible').catch(() => []),
+        api.get('/dashboard/condiciones-venta').catch(() => null),
       ])
       setProductos(Array.isArray(prods) ? prods : [])
       setVentasHoy(hoy)
       setSugerencias(Array.isArray(sug) ? sug : [])
       setProduccionHoy(Array.isArray(prodHoy) ? prodHoy : [])
+      setCondiciones(cond)
+      if (Array.isArray(pp) && pp.length === 0) {
+        const gen = await api.post('/pan-pasado/auto-generar?dias=3', {}).catch(() => null)
+        if (gen && gen.creados > 0) {
+          const pp2 = await api.get('/pan-pasado/disponible').catch(() => [])
+          setPanPasado(Array.isArray(pp2) ? pp2 : [])
+        } else {
+          setPanPasado([])
+        }
+      } else {
+        setPanPasado(Array.isArray(pp) ? pp : [])
+      }
     } catch {
       setToast({ tipo: 'error', msg: '⚠️ Error de conexión' })
     } finally {
       setLoading(false)
     }
   }, [])
+
+  useEffect(() => {
+    if (!loading && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollPos.current
+    }
+  }, [loading])
 
   useEffect(() => {
     cargarDatos()
@@ -83,58 +110,75 @@ export default function VentaRapidaPage() {
     return () => clearTimeout(id)
   }, [toast])
 
-  const agregarAlCarrito = (producto) => {
+  const agregarAlCarrito = (producto, panPasadoId) => {
     setCart(prev => {
-      const existente = prev.find(c => c.producto.id === producto.id)
+      const key = panPasadoId || producto.id
+      const existente = prev.find(c => c.cartKey === key)
       if (existente) {
         return prev.map(c =>
-          c.producto.id === producto.id
+          c.cartKey === key
             ? { ...c, cantidad: c.cantidad + 1 }
             : c
         )
       }
-      return [...prev, { producto, cantidad: 1 }]
+      return [...prev, { producto, cantidad: 1, panPasadoId, cartKey: key }]
     })
   }
 
-  const actualizarCantidad = (productoId, nuevaCantidad) => {
+  const actualizarCantidad = (cartKey, nuevaCantidad) => {
     if (nuevaCantidad <= 0) {
-      setCart(prev => prev.filter(c => c.producto.id !== productoId))
+      setCart(prev => prev.filter(c => c.cartKey !== cartKey))
       return
     }
     setCart(prev =>
       prev.map(c =>
-        c.producto.id === productoId
+        c.cartKey === cartKey
           ? { ...c, cantidad: nuevaCantidad }
           : c
       )
     )
   }
 
-  const eliminarDelCarrito = (productoId) => {
-    setCart(prev => prev.filter(c => c.producto.id !== productoId))
+  const eliminarDelCarrito = (cartKey) => {
+    setCart(prev => prev.filter(c => c.cartKey !== cartKey))
   }
 
   const vendedorId = user?.vendedor_id || undefined
 
   const ejecutarVenta = async () => {
     try {
-      await api.post('/ventas/rapida/lote', {
-        items: invoiceModal.items.map(c => ({
-          producto_id: c.producto.id,
-          cantidad_vendida: c.cantidad,
-          vendedor_id: vendedorId,
-          metodo_pago: invoiceModal.metodo_pago || 'efectivo',
-        })),
-      })
+      const regulares = invoiceModal.items.filter(c => !c.panPasadoId)
+      const panPasados = invoiceModal.items.filter(c => c.panPasadoId)
+      if (regulares.length > 0) {
+        await api.post('/ventas/rapida/lote', {
+          items: regulares.map(c => ({
+            producto_id: c.producto.id,
+            cantidad_vendida: c.cantidad,
+            vendedor_id: vendedorId,
+            metodo_pago: invoiceModal.metodo_pago || 'efectivo',
+          })),
+        })
+      }
+      if (panPasados.length > 0) {
+        for (const c of panPasados) {
+          await api.post(`/pan-pasado/${c.panPasadoId}/vender`, {
+            cantidad_vender: c.cantidad,
+            vendedor_id: vendedorId,
+            metodo_pago: invoiceModal.metodo_pago || 'efectivo',
+          })
+        }
+      }
       const total = invoiceModal.items.reduce((sum, c) => sum + c.cantidad, 0)
       setToast({ tipo: 'ok', msg: `✅ ${total} producto(s) registrado(s)` })
       playBeep()
       setCart([])
-      setMontoRecibido('')
       setInvoiceModal(null)
-      const hoy = await api.get('/ventas/hoy')
+      const [hoy, pp2] = await Promise.all([
+        api.get('/ventas/hoy'),
+        api.get('/pan-pasado/disponible').catch(() => []),
+      ])
       setVentasHoy(hoy)
+      setPanPasado(Array.isArray(pp2) ? pp2 : [])
     } catch {
       setToast({ tipo: 'error', msg: '❌ Error al registrar venta' })
     }
@@ -142,7 +186,8 @@ export default function VentaRapidaPage() {
 
   const mostrarFactura = () => {
     if (cart.length === 0) return
-    if (!todosProducidos) {
+    const soloPanPasado = cart.every(c => c.panPasadoId)
+    if (!todosProducidos && !soloPanPasado) {
       setToast({ tipo: 'error', msg: '⚠️ Todos los productos deben tener producción registrada hoy. Redirigiendo...' })
       setTimeout(() => navigate('registro_diario'), 1200)
       return
@@ -214,9 +259,7 @@ export default function VentaRapidaPage() {
     return prod && prod.producido_hoy > 0
   })
 
-  const monto = parseFloat(montoRecibido) || 0
-  const vuelto = monto - totalCarrito
-  const puedeRegistrar = montoRecibido !== '' && vuelto >= 0 && cart.length > 0 && todosProducidos
+  const puedeRegistrar = cart.length > 0 && todosProducidos
 
   function playBeep() {
     try {
@@ -227,7 +270,7 @@ export default function VentaRapidaPage() {
       gain.connect(ctx.destination)
       osc.frequency.value = 880
       osc.type = 'sine'
-      gain.gain.setValueAtTime(0.25, ctx.currentTime)
+      gain.gain.setValueAtTime(0.5, ctx.currentTime)
       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2)
       osc.start()
       osc.stop(ctx.currentTime + 0.2)
@@ -254,9 +297,54 @@ export default function VentaRapidaPage() {
           )}
         </div>
       </div>
-
       <div className="venta-rapida-layout">
-        <div className="productos-section">
+        <div className="productos-section" ref={scrollRef}>
+
+          {panPasado.length > 0 && (
+            <div style={{ marginBottom: '12px' }}>
+              <div onClick={() => setPpExpandido(e => !e)} style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                background: 'linear-gradient(135deg, #fff3e0, #ffe0b2)',
+                borderRadius: '8px', padding: '7px 12px',
+                border: '1px solid #ffcc80', cursor: 'pointer',
+              }}>
+                <span style={{ fontSize: '16px' }}>🥖</span>
+                <span style={{ fontWeight: 700, fontSize: '13px', color: '#e65100', flex: 1 }}>Pan del Día Anterior</span>
+                <span style={{ fontSize: '11px', color: '#bf360c' }}>Agregar al carrito</span>
+                <span style={{
+                  background: '#e65100', color: '#fff', borderRadius: '10px',
+                  padding: '1px 8px', fontSize: '11px', fontWeight: 600,
+                }}>{panPasado.reduce((s, p) => s + p.disponible, 0)} uds</span>
+                <span style={{ fontSize: '11px', color: '#e65100', fontWeight: 600, transition: 'transform 0.2s', transform: ppExpandido ? 'rotate(180deg)' : '' }}>▼</span>
+              </div>
+
+              {ppExpandido && (
+                <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {panPasado.map(pp => {
+                    const ppCant = ppCantidades[pp.id] || 1
+                    return (
+                      <div key={pp.id} style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        background: '#fff', borderRadius: '6px', padding: '5px 10px',
+                        border: '1px solid #ffe0b2', cursor: 'pointer',
+                      }} onClick={() => {
+                        const prod = { id: pp.producto_id, nombre: pp.producto_nombre, precio: pp.precio_unitario, categoria: 'Pan de mesa' }
+                        agregarAlCarrito(prod, pp.id)
+                      }}>
+                        <span style={{ fontWeight: 600, fontSize: '12px', color: '#333', flex: 1, minWidth: 0 }}>
+                          🥖 {pp.producto_nombre}
+                          <span style={{ fontSize: '10px', color: '#999', marginLeft: '4px' }}>({pp.disponible})</span>
+                        </span>
+                        <span style={{ fontSize: '11px', color: '#e65100', fontWeight: 600, whiteSpace: 'nowrap' }}>S/ {pp.precio_unitario.toFixed(2)}</span>
+                        <span style={{ fontSize: '10px', color: '#999', fontStyle: 'italic' }}>+ Carrito</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="search-filter-row">
             <div className="search-wrapper">
               <span className="search-icon">🔍</span>
@@ -272,6 +360,26 @@ export default function VentaRapidaPage() {
               ))}
             </div>
           </div>
+
+          {condiciones && (
+            <div style={{
+              padding: '8px 14px', borderRadius: '8px', marginBottom: '12px',
+              background: condiciones.sugerir_mas_produccion ? 'linear-gradient(135deg, #e8f5e9, #c8e6c9)' : 'linear-gradient(135deg, #e3f2fd, #bbdefb)',
+              border: `1px solid ${condiciones.sugerir_mas_produccion ? '#a5d6a7' : '#90caf9'}`,
+              display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
+            }}>
+              <span style={{ fontSize: '18px' }}>{condiciones.es_finde || condiciones.es_feriado ? '📈' : condiciones.clima === 'Lluvia' ? '🌧️' : '🌤️'}</span>
+              <span style={{ fontSize: '12px', color: '#555', flex: 1 }}>
+                <strong>{condiciones.dia_semana}</strong> · {condiciones.clima} · {condiciones.hora}:00 hs · <strong>{condiciones.recomendacion}</strong>
+              </span>
+              {condiciones.sugerir_mas_produccion && (
+                <span style={{ fontSize: '12px', fontWeight: 600, color: '#2e7d32', background: '#e8f5e9', padding: '2px 10px', borderRadius: '12px' }}>
+                  ⬆️ Sugerido aumentar producción
+                </span>
+              )}
+            </div>
+          )}
+
           {!todosProducidos && (
             <div className="card" style={{ borderLeft: '4px solid #e74c3c', padding: '12px 18px', marginBottom: '15px' }}>
               <p style={{ color: '#e74c3c', fontWeight: 600 }}>⚠️ Faltan productos por producir hoy</p>
@@ -296,7 +404,7 @@ export default function VentaRapidaPage() {
                   ) : stock ? (
                     <span className={`stock-badge ${stock.disponible > 0 ? 'disponible' : 'agotado'}`}>
                       🏭 {stock.producido} · ✅ {stock.vendido}
-                      {stock.disponible > 0 && ` · Disponible: ${stock.disponible}`}
+                      {stock.disponible > 0 ? ` · Disp: ${stock.disponible}` : condiciones?.sugerir_mas_produccion ? ' ⬆️ Sugerir +' : ''}
                     </span>
                   ) : (
                     <span className="stock-badge sin-stock">Sin registro</span>
@@ -312,8 +420,9 @@ export default function VentaRapidaPage() {
           </div>
 
           {ventasProductos.length > 0 && (
-            <div className="card">
+            <div className="card" style={{ marginTop: '15px' }}>
               <h3>Ventas de Hoy</h3>
+          <button className="btn" onClick={() => descargarExcel('VentaRapidaPage', [{ key: "producto_nombre", label: "Producto" }, { key: "total_vendido", label: "Unidades" }, { key: "transacciones", label: "Trans." }, { key: "ingreso", label: "Ingreso" }], ventasProductos)} style={{ fontSize: '11px', padding: '3px 8px', background: '#27ae60', color: '#fff', marginLeft: '8px' }}>📊 Excel</button>
               <table>
                 <thead>
                   <tr>
@@ -372,19 +481,22 @@ export default function VentaRapidaPage() {
               <div className="cart-empty">Selecciona un producto</div>
             ) : (
               cart.map(c => (
-                <div key={c.producto.id} className="cart-item">
-                  <span className="cart-item-emoji">{getEmoji(c.producto.categoria)}</span>
+                <div key={c.cartKey} className="cart-item">
+                  <span className="cart-item-emoji">{c.panPasadoId ? '🥖' : getEmoji(c.producto.categoria)}</span>
                   <div className="cart-item-info">
-                    <span className="cart-item-name">{c.producto.nombre}</span>
+                    <span className="cart-item-name">
+                      {c.producto.nombre}
+                      {c.panPasadoId && <span style={{ fontSize: '10px', color: '#e65100', marginLeft: '4px' }}>Pan anterior</span>}
+                    </span>
                     <span className="cart-item-price">S/ {c.producto.precio.toFixed(2)}</span>
                   </div>
                   <div className="cart-item-controls">
-                    <button className="cart-item-btn" onClick={() => actualizarCantidad(c.producto.id, c.cantidad - 1)}>−</button>
+                    <button className="cart-item-btn" onClick={() => actualizarCantidad(c.cartKey, c.cantidad - 1)}>−</button>
                     <span className="cart-item-qty">{c.cantidad}</span>
-                    <button className="cart-item-btn" onClick={() => actualizarCantidad(c.producto.id, c.cantidad + 1)}>+</button>
+                    <button className="cart-item-btn" onClick={() => actualizarCantidad(c.cartKey, c.cantidad + 1)}>+</button>
                   </div>
                   <span className="cart-item-subtotal">S/ {(c.producto.precio * c.cantidad).toFixed(2)}</span>
-                  <button className="cart-item-remove" onClick={() => eliminarDelCarrito(c.producto.id)}>✕</button>
+                  <button className="cart-item-remove" onClick={() => eliminarDelCarrito(c.cartKey)}>✕</button>
                 </div>
               ))
             )}
@@ -397,20 +509,6 @@ export default function VentaRapidaPage() {
                   {emoji} {key.charAt(0).toUpperCase() + key.slice(1)}
                 </button>
               ))}
-            </div>
-            <div className="vuelto-section">
-              <label>💰 Con cuánto paga</label>
-              <div className="vuelto-input-row">
-                <span className="vuelto-symbol">S/</span>
-                <input type="number" value={montoRecibido}
-                  onChange={e => setMontoRecibido(e.target.value)}
-                  placeholder="0.00" min="0" step="0.10" />
-              </div>
-              {montoRecibido !== '' && (
-                vuelto >= 0
-                  ? <div className="vuelto-positivo">🔄 Vuelto: S/ {vuelto.toFixed(2)}</div>
-                  : <div className="vuelto-negativo">⚠️ Faltan: S/ {Math.abs(vuelto).toFixed(2)}</div>
-              )}
             </div>
             <div className="cart-total">
               <span>Total</span>

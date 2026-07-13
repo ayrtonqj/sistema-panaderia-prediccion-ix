@@ -1,19 +1,32 @@
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, text
 from datetime import date, timedelta, datetime
+from apscheduler.schedulers.background import BackgroundScheduler
 from typing import Optional
+from collections import Counter
 import uuid
+import json
+import time
+import asyncio
+import os
 import models
 from database import engine, SessionLocal
 from ml.seed_data import PRODUCTOS, RECETAS, INSUMOS
+from utils.helpers import (
+    FIJOS, FIJOS_ROL, calcular_tasa_merma, get_or_404,
+    validar_token_sesion, generar_qr_2fa, generar_qr_desde_secret,
+)
+from chatbot.router import router as chatbot_router
 
 models.Base.metadata.create_all(bind=engine)
 
 with engine.connect() as conn:
     conn.execute(text("ALTER TABLE fact_ventas ADD COLUMN IF NOT EXISTS metodo_pago VARCHAR(20) DEFAULT 'efectivo'"))
+    conn.execute(text("ALTER TABLE fact_ventas ADD COLUMN IF NOT EXISTS precio_unitario FLOAT"))
     conn.execute(text("ALTER TABLE fact_ordenes_compra ADD COLUMN IF NOT EXISTS es_sugerida BOOLEAN DEFAULT FALSE"))
     conn.execute(text("ALTER TABLE fact_ordenes_compra ADD COLUMN IF NOT EXISTS cantidad_sugerida_original FLOAT"))
     conn.execute(text("ALTER TABLE fact_ordenes_compra ADD COLUMN IF NOT EXISTS fecha_necesaria DATE"))
@@ -26,12 +39,22 @@ with engine.connect() as conn:
     conn.execute(text("ALTER TABLE totp_config ADD COLUMN IF NOT EXISTS old_totp_secret VARCHAR(64)"))
     conn.commit()
 
+# Auto-crear vendedores por defecto si no existen
+with SessionLocal() as session:
+    if session.query(models.DimVendedor).count() == 0:
+        session.add_all([
+            models.DimVendedor(nombre="Josue", apellido="Angeldones", dni="12345678", telefono="999111000", email="josue@panaderia.com", username="vendedor01", password="vendedor123", activo=True),
+            models.DimVendedor(nombre="Eduardo", apellido="Quinones", dni="87654321", telefono="999222000", email="eduardo@panaderia.com", username="vendedor02", password="vendedor456", activo=True),
+        ])
+        session.commit()
+        print("[AUTO] Vendedores creados: 999111000 / 12345678 (Josue) y 999222000 / 87654321 (Eduardo)")
+
 # Session tokens temporales para 2FA (username -> {token, expira})
 SESSION_TOKENS = {}
-# Intentos de verificación de setup 2FA (username -> contador)
+# Intentos de verificaciÃ³n de setup 2FA (username -> contador)
 VERIFY_2FA_ATTEMPTS = {}
 
-app = FastAPI(title="Sistema Predictivo Panadería Victoria", version="2.0")
+app = FastAPI(title="Sistema Predictivo PanaderÃ­a Victoria", version="2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,6 +64,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(chatbot_router)
+
+
+
+def sse(event, data):
+    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
 
 def get_db():
@@ -51,7 +80,7 @@ def get_db():
         db.close()
 
 
-# ── Schemas ──────────────────────────────────────────────────────────────────
+# â”€â”€ Schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ProductoCreate(BaseModel):
     nombre: str
@@ -244,9 +273,11 @@ class PrediccionCreate(BaseModel):
     fecha_proyectada: date
     demanda_estimada: float
     confianza_prediccion: Optional[float] = None
+    algoritmo_utilizado: Optional[str] = None
 
 class PrediccionResponse(PrediccionCreate):
     id: int
+    producto_nombre: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -299,6 +330,30 @@ class ProveedorResponse(ProveedorCreate):
     class Config:
         from_attributes = True
 
+class ProveedorInsumoCreate(BaseModel):
+    insumo_id: int
+    precio_unitario: float
+
+class ProveedorInsumoResponse(BaseModel):
+    id: int
+    proveedor_id: int
+    proveedor_nombre: Optional[str] = None
+    insumo_id: int
+    insumo_nombre: Optional[str] = None
+    unidad_medida: Optional[str] = None
+    precio_unitario: float
+    class Config:
+        from_attributes = True
+
+class ProveedorDetalle(ProveedorResponse):
+    insumos_precios: list[ProveedorInsumoResponse] = []
+
+class ProveedorUpdate(BaseModel):
+    nombre: Optional[str] = None
+    contacto: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+
 class OrdenCompraCreate(BaseModel):
     proveedor_id: int
     insumo_id: int
@@ -334,15 +389,44 @@ class OrdenCompraDetallada(BaseModel):
     class Config:
         from_attributes = True
 
+class PanPasadoCreate(BaseModel):
+    producto_id: int
+    fecha_origen: date
+    cantidad: float
 
-# ── Root ─────────────────────────────────────────────────────────────────────
+class PanPasadoUpdate(BaseModel):
+    cantidad: Optional[float] = None
+    estado: Optional[str] = None
+
+class PanPasadoVender(BaseModel):
+    cantidad_vender: float
+    vendedor_id: Optional[int] = None
+    metodo_pago: Optional[str] = None
+    vendedor_id: Optional[int] = None
+    metodo_pago: Optional[str] = None
+
+class PanPasadoResponse(BaseModel):
+    id: int
+    producto_id: int
+    producto_nombre: Optional[str] = None
+    fecha_origen: date
+    cantidad: float
+    precio_unitario: float
+    cantidad_vendida: float
+    estado: str
+    total_venta: Optional[float] = None
+    class Config:
+        from_attributes = True
+
+
+# â”€â”€ Root â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/")
 def read_root():
     return {
         "status": "online",
         "version": "2.0",
-        "mensaje": "Sistema Predictivo Panadería Victoria — API activa",
+        "mensaje": "Sistema Predictivo PanaderÃ­a Victoria â€” API activa",
         "endpoints_principales": [
             "/docs", "/dashboard/resumen",
             "/ml/entrenar", "/predicciones/generar",
@@ -351,7 +435,7 @@ def read_root():
     }
 
 
-# ── Productos ────────────────────────────────────────────────────────────────
+# â”€â”€ Productos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/productos/", response_model=ProductoResponse)
 def crear_producto(producto: ProductoCreate, db: Session = Depends(get_db)):
@@ -367,16 +451,11 @@ def listar_productos(db: Session = Depends(get_db)):
 
 @app.get("/productos/{producto_id}", response_model=ProductoResponse)
 def obtener_producto(producto_id: int, db: Session = Depends(get_db)):
-    prod = db.query(models.DimProducto).filter(models.DimProducto.id == producto_id).first()
-    if not prod:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
-    return prod
+    return get_or_404(db, models.DimProducto, producto_id, "Producto no encontrado")
 
 @app.put("/productos/{producto_id}", response_model=ProductoResponse)
 def actualizar_producto(producto_id: int, datos: ProductoUpdate, db: Session = Depends(get_db)):
-    prod = db.query(models.DimProducto).filter(models.DimProducto.id == producto_id).first()
-    if not prod:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    prod = get_or_404(db, models.DimProducto, producto_id, "Producto no encontrado")
     for campo, valor in datos.model_dump(exclude_none=True).items():
         setattr(prod, campo, valor)
     db.commit()
@@ -385,16 +464,14 @@ def actualizar_producto(producto_id: int, datos: ProductoUpdate, db: Session = D
 
 @app.delete("/productos/{producto_id}")
 def eliminar_producto(producto_id: int, db: Session = Depends(get_db)):
-    prod = db.query(models.DimProducto).filter(models.DimProducto.id == producto_id).first()
-    if not prod:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    prod = get_or_404(db, models.DimProducto, producto_id, "Producto no encontrado")
     db.delete(prod)
     db.commit()
     return {"mensaje": f"Producto {producto_id} eliminado"}
 
 @app.post("/productos/migrate-add-missing")
 def agregar_productos_faltantes(db: Session = Depends(get_db)):
-    """Agrega los productos definidos en seed_data que aún no existen en la BD."""
+    """Agrega los productos definidos en seed_data que aÃºn no existen en la BD."""
     existentes = {p.nombre for p in db.query(models.DimProducto).all()}
     insumos_db = {ins.nombre: ins.id for ins in db.query(models.InsumoCritico).all()}
     agregados = 0
@@ -463,12 +540,7 @@ def actividad_productos(db: Session = Depends(get_db)):
     return result
 
 
-# ── Vendedores ───────────────────────────────────────────────────────────────
-
-if False:
-    @app.get("/vendedores/", response_model=list[VendedorResponse])
-    def listar_vendedores(db: Session = Depends(get_db)):
-        return db.query(models.DimVendedor).filter(models.DimVendedor.activo == True).all()
+# â”€â”€ Vendedores â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/vendedores/todos", response_model=list[VendedorResponse])
 def listar_vendedores_todos(db: Session = Depends(get_db)):
@@ -516,16 +588,11 @@ def crear_vendedor(vendedor: VendedorCreate, db: Session = Depends(get_db)):
 
 @app.get("/vendedores/{vendedor_id}", response_model=VendedorResponse)
 def obtener_vendedor(vendedor_id: int, db: Session = Depends(get_db)):
-    vendedor = db.query(models.DimVendedor).filter(models.DimVendedor.id == vendedor_id).first()
-    if not vendedor:
-        raise HTTPException(status_code=404, detail="Vendedor no encontrado")
-    return vendedor
+    return get_or_404(db, models.DimVendedor, vendedor_id, "Vendedor no encontrado")
 
 @app.put("/vendedores/{vendedor_id}", response_model=VendedorResponse)
 def actualizar_vendedor(vendedor_id: int, datos: VendedorUpdate, db: Session = Depends(get_db)):
-    vendedor = db.query(models.DimVendedor).filter(models.DimVendedor.id == vendedor_id).first()
-    if not vendedor:
-        raise HTTPException(status_code=404, detail="Vendedor no encontrado")
+    vendedor = get_or_404(db, models.DimVendedor, vendedor_id, "Vendedor no encontrado")
     update_data = datos.model_dump(exclude_none=True)
     if "telefono" in update_data:
         update_data["username"] = update_data["telefono"]
@@ -539,24 +606,17 @@ def actualizar_vendedor(vendedor_id: int, datos: VendedorUpdate, db: Session = D
 
 @app.delete("/vendedores/{vendedor_id}")
 def eliminar_vendedor(vendedor_id: int, db: Session = Depends(get_db)):
-    vendedor = db.query(models.DimVendedor).filter(models.DimVendedor.id == vendedor_id).first()
-    if not vendedor:
-        raise HTTPException(status_code=404, detail="Vendedor no encontrado")
+    vendedor = get_or_404(db, models.DimVendedor, vendedor_id, "Vendedor no encontrado")
     nombre = vendedor.nombre
     n_ventas = db.query(models.FactVenta).filter(models.FactVenta.vendedor_id == vendedor_id).count()
     if n_ventas > 0:
-        raise HTTPException(status_code=409, detail=f"No se puede eliminar: el vendedor tiene {n_ventas} venta(s) registrada(s). Desactívelo en vez de eliminarlo.")
+        raise HTTPException(status_code=409, detail=f"No se puede eliminar: el vendedor tiene {n_ventas} venta(s) registrada(s). DesactÃ­velo en vez de eliminarlo.")
     db.delete(vendedor)
     db.commit()
     return {"mensaje": f"Vendedor '{nombre}' eliminado correctamente."}
 
 @app.post("/auth/login")
 def login(creds: LoginRequest, db: Session = Depends(get_db)):
-    FIJOS = {
-        "admin": {"rol": "administrador", "vendedor_id": None},
-        "gerente": {"rol": "gerente", "vendedor_id": None},
-        "cocina": {"rol": "cocina", "vendedor_id": None},
-    }
     es_fijo = False
     rol = None
     vendedor_id = None
@@ -577,7 +637,7 @@ def login(creds: LoginRequest, db: Session = Depends(get_db)):
             rol = "vendedor"
             vendedor_id = vendedor.id
         else:
-            raise HTTPException(status_code=401, detail="Credenciales inválidas")
+            raise HTTPException(status_code=401, detail="Credenciales invÃ¡lidas")
 
     # Verificar si tiene 2FA configurado
     totp_row = db.query(models.TotpConfig).filter(
@@ -600,21 +660,11 @@ def login(creds: LoginRequest, db: Session = Depends(get_db)):
 
     # Reparar: si existe registro pero totp_enabled=False (corrupto por recover-2fa viejo)
     if totp_row is not None and not totp_row.totp_enabled:
-        import pyotp, qrcode, base64, io
-        from PIL import Image
-
         totp_row.totp_enabled = True
         db.commit()
 
-        pyotp_obj = pyotp.TOTP(totp_row.totp_secret)
-        uri = pyotp_obj.provisioning_uri(creds.username, issuer_name="Panadería Victoria")
-        qr = qrcode.QRCode(box_size=6, border=2)
-        qr.add_data(uri)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        qr_b64 = base64.b64encode(buf.getvalue()).decode()
+        qr_data = generar_qr_desde_secret(totp_row.totp_secret, creds.username)
+        qr_b64 = qr_data["qr_base64"]
 
         token = str(uuid.uuid4())
         SESSION_TOKENS[token] = {
@@ -629,7 +679,7 @@ def login(creds: LoginRequest, db: Session = Depends(get_db)):
             "qr_recovery": qr_b64,
         }
 
-    # Primera vez: verificar si ya configuró 2FA alguna vez
+    # Primera vez: verificar si ya configurÃ³ 2FA alguna vez
     ya_tiene_secreto = totp_row is not None
     if not ya_tiene_secreto:
         return {
@@ -644,15 +694,8 @@ def login(creds: LoginRequest, db: Session = Depends(get_db)):
 
 @app.post("/auth/login-2fa")
 def login_2fa(body: Login2FARequest, db: Session = Depends(get_db)):
-    # Validar session token
-    token_data = SESSION_TOKENS.get(body.session_token)
-    if not token_data:
-        raise HTTPException(status_code=401, detail="Sesión expirada. Inicie sesión nuevamente.")
-    if token_data["expira"] < datetime.now():
-        del SESSION_TOKENS[body.session_token]
-        raise HTTPException(status_code=401, detail="Token expirado. Inicie sesión nuevamente.")
-    if token_data["username"] != body.username:
-        raise HTTPException(status_code=401, detail="Token inválido.")
+    validar_token_sesion(body.session_token, body.username, SESSION_TOKENS)
+    token_data = SESSION_TOKENS[body.session_token]
 
     # Obtener secreto TOTP
     totp_row = db.query(models.TotpConfig).filter(
@@ -663,11 +706,11 @@ def login_2fa(body: Login2FARequest, db: Session = Depends(get_db)):
 
     import pyotp
 
-    # Verificar código contra nuevo secreto
+    # Verificar cÃ³digo contra nuevo secreto
     totp_new = pyotp.TOTP(totp_row.totp_secret)
     code_valid = totp_new.verify(body.totp_code)
 
-    # Si falla, probar contra viejo secreto (migración en curso)
+    # Si falla, probar contra viejo secreto (migraciÃ³n en curso)
     if not code_valid and totp_row.old_totp_secret:
         totp_old = pyotp.TOTP(totp_row.old_totp_secret)
         code_valid = totp_old.verify(body.totp_code)
@@ -679,15 +722,14 @@ def login_2fa(body: Login2FARequest, db: Session = Depends(get_db)):
     if not code_valid:
         if token_data["intentos"] >= 3:
             del SESSION_TOKENS[body.session_token]
-            raise HTTPException(status_code=429, detail="Demasiados intentos. Inicie sesión nuevamente.")
-        raise HTTPException(status_code=401, detail=f"Código inválido. Intento {token_data['intentos']}/3.")
+            raise HTTPException(status_code=429, detail="Demasiados intentos. Inicie sesiÃ³n nuevamente.")
+        raise HTTPException(status_code=401, detail=f"CÃ³digo invÃ¡lido. Intento {token_data['intentos']}/3.")
 
     # Login exitoso
     del SESSION_TOKENS[body.session_token]
 
-    FIJOS = {"admin": "administrador", "gerente": "gerente", "cocina": "cocina"}
-    if body.username in FIJOS:
-        return {"username": body.username, "rol": FIJOS[body.username], "vendedor_id": None}
+    if body.username in FIJOS_ROL:
+        return {"username": body.username, "rol": FIJOS_ROL[body.username], "vendedor_id": None}
 
     v = db.query(models.DimVendedor).filter(
         models.DimVendedor.username == body.username,
@@ -703,24 +745,11 @@ def login_2fa(body: Login2FARequest, db: Session = Depends(get_db)):
 def setup_2fa(body: Setup2FARequest, db: Session = Depends(get_db)):
     _verificar_credenciales(body.username, body.password, db)
 
-    import pyotp, qrcode, base64, io
-    from PIL import Image
+    qr_data = generar_qr_2fa(body.username)
+    secret = qr_data["secret"]
+    qr_b64 = qr_data["qr_base64"]
 
-    # Generar secreto TOTP
-    secret = pyotp.random_base32()
-    totp = pyotp.TOTP(secret)
-    uri = totp.provisioning_uri(body.username, issuer_name="Panadería Victoria")
-
-    # Generar QR en base64
-    qr = qrcode.QRCode(box_size=6, border=2)
-    qr.add_data(uri)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    qr_b64 = base64.b64encode(buf.getvalue()).decode()
-
-    # Guardar o reemplazar secreto (aún NO activo)
+    # Guardar o reemplazar secreto (aÃºn NO activo)
     existing = db.query(models.TotpConfig).filter(
         models.TotpConfig.username == body.username
     ).first()
@@ -734,7 +763,7 @@ def setup_2fa(body: Setup2FARequest, db: Session = Depends(get_db)):
 
     return {
         "secret": secret,
-        "uri": uri,
+        "uri": qr_data["uri"],
         "qr_base64": qr_b64,
         "codigo_manual": secret,
     }
@@ -742,7 +771,7 @@ def setup_2fa(body: Setup2FARequest, db: Session = Depends(get_db)):
 
 @app.post("/auth/verify-2fa")
 def verify_2fa(body: Verify2FARequest, db: Session = Depends(get_db)):
-    """Verifica código TOTP y activa 2FA. Máx 3 intentos de verificación."""
+    """Verifica cÃ³digo TOTP y activa 2FA. MÃ¡x 3 intentos de verificaciÃ³n."""
     import pyotp
 
     totp_row = db.query(models.TotpConfig).filter(
@@ -752,7 +781,7 @@ def verify_2fa(body: Verify2FARequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Primero ejecute /auth/setup-2fa.")
 
     if totp_row.totp_enabled:
-        raise HTTPException(status_code=400, detail="2FA ya está activo.")
+        raise HTTPException(status_code=400, detail="2FA ya estÃ¡ activo.")
 
     # Contador de intentos (en memoria por username)
     VERIFY_2FA_ATTEMPTS[body.username] = VERIFY_2FA_ATTEMPTS.get(body.username, 0) + 1
@@ -770,40 +799,22 @@ def verify_2fa(body: Verify2FARequest, db: Session = Depends(get_db)):
         # Eliminar secreto para que reinicie desde login
         db.delete(totp_row)
         db.commit()
-        raise HTTPException(status_code=429, detail="Demasiados intentos. El QR ha sido invalidado. Inicie sesión nuevamente.")
+        raise HTTPException(status_code=429, detail="Demasiados intentos. El QR ha sido invalidado. Inicie sesiÃ³n nuevamente.")
 
-    raise HTTPException(status_code=401, detail=f"Código inválido. Intento {attempts}/3.")
+    raise HTTPException(status_code=401, detail=f"CÃ³digo invÃ¡lido. Intento {attempts}/3.")
 
 
 @app.post("/auth/recover-2fa")
 def recover_2fa(body: Recover2FARequest, db: Session = Depends(get_db)):
     """Genera nuevo secreto TOTP y QR para re-vincular Google Authenticator.
-    Requiere contraseña del usuario como prueba de identidad."""
-    token_data = SESSION_TOKENS.get(body.session_token)
-    if not token_data:
-        raise HTTPException(status_code=401, detail="Sesión expirada. Inicie sesión nuevamente.")
-    if token_data["expira"] < datetime.now():
-        del SESSION_TOKENS[body.session_token]
-        raise HTTPException(status_code=401, detail="Token expirado. Inicie sesión nuevamente.")
-    if token_data["username"] != body.username:
-        raise HTTPException(status_code=401, detail="Token inválido.")
+    Requiere contraseÃ±a del usuario como prueba de identidad."""
+    token_data = validar_token_sesion(body.session_token, body.username, SESSION_TOKENS)
 
     _verificar_credenciales(body.username, body.password, db)
 
-    import pyotp, qrcode, base64, io
-    from PIL import Image
-
-    secret = pyotp.random_base32()
-    totp = pyotp.TOTP(secret)
-    uri = totp.provisioning_uri(body.username, issuer_name="Panadería Victoria")
-
-    qr = qrcode.QRCode(box_size=6, border=2)
-    qr.add_data(uri)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    qr_b64 = base64.b64encode(buf.getvalue()).decode()
+    qr_data = generar_qr_2fa(body.username)
+    secret = qr_data["secret"]
+    qr_b64 = qr_data["qr_base64"]
 
     existing = db.query(models.TotpConfig).filter(
         models.TotpConfig.username == body.username
@@ -824,15 +835,8 @@ def recover_2fa(body: Recover2FARequest, db: Session = Depends(get_db)):
 
 @app.post("/auth/recover-verify")
 def recover_verify(body: RecoverVerifyRequest, db: Session = Depends(get_db)):
-    """Verifica código TOTP del nuevo secreto y completa el login si es válido."""
-    token_data = SESSION_TOKENS.get(body.session_token)
-    if not token_data:
-        raise HTTPException(status_code=401, detail="Sesión expirada. Inicie sesión nuevamente.")
-    if token_data["expira"] < datetime.now():
-        del SESSION_TOKENS[body.session_token]
-        raise HTTPException(status_code=401, detail="Token expirado. Inicie sesión nuevamente.")
-    if token_data["username"] != body.username:
-        raise HTTPException(status_code=401, detail="Token inválido.")
+    """Verifica cÃ³digo TOTP del nuevo secreto y completa el login si es vÃ¡lido."""
+    token_data = validar_token_sesion(body.session_token, body.username, SESSION_TOKENS)
 
     totp_row = db.query(models.TotpConfig).filter(
         models.TotpConfig.username == body.username
@@ -852,9 +856,8 @@ def recover_verify(body: RecoverVerifyRequest, db: Session = Depends(get_db)):
         db.commit()
         del SESSION_TOKENS[body.session_token]
 
-        FIJOS = {"admin": "administrador", "gerente": "gerente", "cocina": "cocina"}
-        if body.username in FIJOS:
-            return {"username": body.username, "rol": FIJOS[body.username], "vendedor_id": None}
+        if body.username in FIJOS_ROL:
+            return {"username": body.username, "rol": FIJOS_ROL[body.username], "vendedor_id": None}
         v = db.query(models.DimVendedor).filter(
             models.DimVendedor.username == body.username,
             models.DimVendedor.activo == True,
@@ -865,9 +868,9 @@ def recover_verify(body: RecoverVerifyRequest, db: Session = Depends(get_db)):
 
     if attempts >= 3:
         del SESSION_TOKENS[body.session_token]
-        raise HTTPException(status_code=429, detail="Demasiados intentos. Inicie sesión nuevamente.")
+        raise HTTPException(status_code=429, detail="Demasiados intentos. Inicie sesiÃ³n nuevamente.")
 
-    raise HTTPException(status_code=401, detail=f"Código inválido. Intento {attempts}/3.")
+    raise HTTPException(status_code=401, detail=f"CÃ³digo invÃ¡lido. Intento {attempts}/3.")
 
 
 @app.post("/auth/disable-2fa")
@@ -883,35 +886,32 @@ def disable_2fa(body: Disable2FARequest, db: Session = Depends(get_db)):
 
 
 def _verificar_credenciales(username, password, db):
-    FIJOS = {"admin": "administrador", "gerente": "gerente", "cocina": "cocina"}
-    if username in FIJOS:
-        if FIJOS[username] == password or username == password:
+    if username in FIJOS_ROL:
+        if FIJOS_ROL[username] == password or username == password:
             return
-        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+        raise HTTPException(status_code=401, detail="Credenciales invÃ¡lidas")
     v = db.query(models.DimVendedor).filter(
         models.DimVendedor.username == username,
         models.DimVendedor.password == password,
         models.DimVendedor.activo == True,
     ).first()
     if not v:
-        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+        raise HTTPException(status_code=401, detail="Credenciales invÃ¡lidas")
 
 
-# ── Background: enviar PDF de orden confirmada por email ───────────────────────
+# â”€â”€ Background: enviar PDF de orden confirmada por email â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-def _orden_to_dict(orden, db):
-    proveedor = db.query(models.Proveedor).filter(models.Proveedor.id == orden.proveedor_id).first()
-    insumo = db.query(models.InsumoCritico).filter(models.InsumoCritico.id == orden.insumo_id).first()
+def _orden_to_dict(orden):
     return {
         "id": orden.id,
         "proveedor": {
-            "nombre": proveedor.nombre if proveedor else "—",
-            "contacto": proveedor.contacto if proveedor else "—",
-            "telefono": proveedor.telefono if proveedor else "—",
-            "email": proveedor.email if proveedor else "—",
-        } if proveedor else {"nombre": "—"},
-        "insumo_nombre": insumo.nombre if insumo else "—",
-        "insumo": {"nombre": insumo.nombre if insumo else "—"},
+            "nombre": orden.proveedor.nombre if orden.proveedor else "â€”",
+            "contacto": orden.proveedor.contacto if orden.proveedor else "â€”",
+            "telefono": orden.proveedor.telefono if orden.proveedor else "â€”",
+            "email": orden.proveedor.email if orden.proveedor else "â€”",
+        } if orden.proveedor else {"nombre": "â€”"},
+        "insumo_nombre": orden.insumo.nombre if orden.insumo else "â€”",
+        "insumo": {"nombre": orden.insumo.nombre if orden.insumo else "â€”"},
         "cantidad": orden.cantidad,
         "precio_unitario": orden.precio_unitario or 0,
         "estado": orden.estado,
@@ -930,7 +930,7 @@ def enviar_pdf_orden_individual(orden_id: int):
         if not orden:
             return
 
-        orden_data = _orden_to_dict(orden, db)
+        orden_data = _orden_to_dict(orden)
         pdf_bytes = generar_pdf_orden(orden_data)
 
         enviar_email_pdf(
@@ -957,14 +957,17 @@ def enviar_pdf_sugerencias(orden_ids: list[int]):
         from utils.pdf_orden import generar_pdf_sugeridas
         from utils.email_utils import ADMIN_EMAIL, enviar_email_pdf
 
-        ordenes = db.query(models.OrdenCompra).filter(
+        ordenes = db.query(models.OrdenCompra).options(
+            joinedload(models.OrdenCompra.proveedor),
+            joinedload(models.OrdenCompra.insumo),
+        ).filter(
             models.OrdenCompra.id.in_(orden_ids)
         ).order_by(models.OrdenCompra.id).all()
 
         if not ordenes:
             return
 
-        ordenes_data = [_orden_to_dict(o, db) for o in ordenes]
+        ordenes_data = [_orden_to_dict(o) for o in ordenes]
         pdf_bytes = generar_pdf_sugeridas(ordenes_data)
 
         insumos_list = ", ".join(o["insumo_nombre"] for o in ordenes_data[:5])
@@ -987,58 +990,19 @@ def enviar_pdf_sugerencias(orden_ids: list[int]):
         db.close()
 
 
-# ── Ventas ───────────────────────────────────────────────────────────────────
-
-if False:
-    @app.post("/ventas/")
-    def crear_venta(venta: VentaCreate, db: Session = Depends(get_db)):
-        """Registra una venta diaria."""
-        if not db.query(models.DimProducto).filter(models.DimProducto.id == venta.producto_id).first():
-            raise HTTPException(status_code=404, detail="Producto no encontrado")
-
-        db_venta = models.FactVenta(**venta.model_dump())
-        db.add(db_venta)
-        db.commit()
-        db.refresh(db_venta)
-
-        return {
-            "id": db_venta.id,
-            "producto_id": db_venta.producto_id,
-            "fecha": str(db_venta.fecha),
-            "cantidad_vendida": db_venta.cantidad_vendida,
-        }
-
-if False:
-    @app.post("/ventas/rapida")
-    def crear_venta_rapida(venta: VentaRapidaCreate, db: Session = Depends(get_db)):
-        """Registro exprés para el vendedor: solo producto y cantidad, fecha = hoy."""
-        if not db.query(models.DimProducto).filter(models.DimProducto.id == venta.producto_id).first():
-            raise HTTPException(status_code=404, detail="Producto no encontrado")
-
-        db_venta = models.FactVenta(
-            producto_id=venta.producto_id,
-            fecha=date.today(),
-            cantidad_vendida=venta.cantidad_vendida,
-            vendedor_id=venta.vendedor_id,
-        )
-        db.add(db_venta)
-        db.commit()
-        db.refresh(db_venta)
-
-        return {
-            "id": db_venta.id,
-            "producto_id": db_venta.producto_id,
-            "vendedor_id": db_venta.vendedor_id,
-            "fecha": str(db_venta.fecha),
-            "cantidad_vendida": db_venta.cantidad_vendida,
-        }
+# â”€â”€ Ventas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/ventas/rapida/lote")
 def crear_ventas_rapida_lote(lote: LoteVentaRapidaCreate, db: Session = Depends(get_db)):
-    """Registra múltiples ventas exprés en una sola transacción."""
+    """Registra mÃºltiples ventas exprÃ©s en una sola transacciÃ³n."""
+    ids = {item.producto_id for item in lote.items}
+    existentes = {p.id for p in db.query(models.DimProducto.id).filter(
+        models.DimProducto.id.in_(ids)
+    ).all()}
+
     ventas_creadas = []
     for item in lote.items:
-        if not db.query(models.DimProducto).filter(models.DimProducto.id == item.producto_id).first():
+        if item.producto_id not in existentes:
             raise HTTPException(status_code=404, detail=f"Producto {item.producto_id} no encontrado")
         db_venta = models.FactVenta(
             producto_id=item.producto_id,
@@ -1059,26 +1023,10 @@ def crear_ventas_rapida_lote(lote: LoteVentaRapidaCreate, db: Session = Depends(
     db.commit()
     return {"mensaje": f"{len(ventas_creadas)} ventas registradas", "ventas": ventas_creadas}
 
-if False:
-    @app.get("/ventas/", response_model=list[VentaConProducto])
-    def listar_ventas(db: Session = Depends(get_db)):
-        ventas = db.query(
-            models.FactVenta.id,
-            models.FactVenta.producto_id,
-            models.DimProducto.nombre.label("producto_nombre"),
-            models.FactVenta.fecha,
-            models.FactVenta.cantidad_vendida,
-            models.FactVenta.vendedor_id,
-            models.DimVendedor.nombre.label("vendedor_nombre"),
-        ).join(models.DimProducto).outerjoin(
-            models.DimVendedor, models.FactVenta.vendedor_id == models.DimVendedor.id
-        ).order_by(models.FactVenta.fecha.desc(), models.FactVenta.id.desc()).limit(150).all()
-        return ventas
-
 
 @app.get("/ventas/hoy")
 def ventas_hoy(vendedor_id: Optional[int] = None, db: Session = Depends(get_db)):
-    """Ventas del día de hoy, agrupadas por producto, para el resumen del vendedor.
+    """Ventas del dÃ­a de hoy, agrupadas por producto, para el resumen del vendedor.
     Opcional: ?vendedor_id=X para filtrar por vendedor."""
     hoy = date.today()
     query = db.query(
@@ -1119,35 +1067,23 @@ def ventas_hoy(vendedor_id: Optional[int] = None, db: Session = Depends(get_db))
         ],
     }
 
-if False:
-    @app.delete("/ventas/{venta_id}")
-    def eliminar_venta(venta_id: int, db: Session = Depends(get_db)):
-        """Elimina una venta."""
-        venta = db.query(models.FactVenta).filter(models.FactVenta.id == venta_id).first()
-        if not venta:
-            raise HTTPException(status_code=404, detail="Venta no encontrada")
 
-        db.delete(venta)
-        db.commit()
-        return {"mensaje": f"Venta {venta_id} eliminada."}
+# â”€â”€ Ventas RÃ¡pidas (resumen) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
-# ── Ventas Rápidas (resumen) ──────────────────────────────────────────────────
-
-
-# ── Producción ─────────────────────────────────────────────────────────────────
+# â”€â”€ ProducciÃ³n â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/produccion/")
 def crear_produccion(produccion: ProduccionCreate, db: Session = Depends(get_db)):
     """
-    Registra producción diaria con dos automatismos:
-    1. MERMA AUTOMATICA: si producido > vendido en el día, genera FactMerma con motivo Sobreproducción.
-    2. DESCUENTO DE STOCK: descuenta insumos según ficha técnica × cantidad_producida.
+    Registra producciÃ³n diaria con dos automatismos:
+    1. MERMA AUTOMATICA: si producido > vendido en el dÃ­a, genera FactMerma con motivo SobreproducciÃ³n.
+    2. DESCUENTO DE STOCK: descuenta insumos segÃºn ficha tÃ©cnica Ã— cantidad_producida.
     """
     if not db.query(models.DimProducto).filter(models.DimProducto.id == produccion.producto_id).first():
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-    # Guardar producción
+    # Guardar producciÃ³n
     db_prod = models.FactProduccion(**produccion.model_dump())
     db.add(db_prod)
     db.flush()
@@ -1155,7 +1091,7 @@ def crear_produccion(produccion: ProduccionCreate, db: Session = Depends(get_db)
     merma_auto = None
     stock_descontado = []
 
-    # Automatismo 1: Merma automática por excedente (comparando con ventas del día)
+    # Automatismo 1: Merma automÃ¡tica por excedente (comparando con ventas del dÃ­a)
     total_vendido_hoy = db.query(func.sum(models.FactVenta.cantidad_vendida)).filter(
         models.FactVenta.producto_id == produccion.producto_id,
         models.FactVenta.fecha == produccion.fecha,
@@ -1163,24 +1099,36 @@ def crear_produccion(produccion: ProduccionCreate, db: Session = Depends(get_db)
 
     if produccion.cantidad_producida > total_vendido_hoy:
         excedente = round(produccion.cantidad_producida - total_vendido_hoy, 2)
-        db.add(models.FactMerma(
-            producto_id=produccion.producto_id,
-            fecha=produccion.fecha,
-            cantidad_merma=excedente,
-            motivo="Sobreproducción",
-        ))
-        merma_auto = f"{excedente} unidades (Sobreproducción)"
+        prod_nombre = db.query(models.DimProducto.nombre).filter(models.DimProducto.id == produccion.producto_id).scalar()
+        prod_categoria = db.query(models.DimProducto.categoria).filter(models.DimProducto.id == produccion.producto_id).scalar()
+        es_pan = prod_categoria in ("Pan de mesa", "Pan especial")
+        if es_pan:
+            db.add(models.PanPasado(
+                producto_id=produccion.producto_id,
+                fecha_origen=produccion.fecha,
+                cantidad=excedente,
+                precio_unitario=round(db.query(models.DimProducto.costo).filter(models.DimProducto.id == produccion.producto_id).scalar() * 1.10, 2),
+            ))
+            merma_auto = f"{excedente} unidades â†’ Pan del DÃ­a Anterior"
+        else:
+            db.add(models.FactMerma(
+                producto_id=produccion.producto_id,
+                fecha=produccion.fecha,
+                cantidad_merma=excedente,
+                motivo="SobreproducciÃ³n",
+            ))
+            merma_auto = f"{excedente} unidades (SobreproducciÃ³n)"
 
     # Automatismo 2: Validar stock antes de descontar
     if produccion.cantidad_producida > 0:
-        fichas = db.query(models.FichaTecnica).filter(
+        fichas = db.query(models.FichaTecnica).options(
+            joinedload(models.FichaTecnica.insumo)
+        ).filter(
             models.FichaTecnica.producto_id == produccion.producto_id
         ).all()
         insuficientes = []
         for ficha in fichas:
-            insumo = db.query(models.InsumoCritico).filter(
-                models.InsumoCritico.id == ficha.insumo_id
-            ).first()
+            insumo = ficha.insumo
             if insumo:
                 consumo = round(ficha.cantidad_necesaria * produccion.cantidad_producida, 4)
                 if insumo.stock_actual < consumo:
@@ -1199,9 +1147,7 @@ def crear_produccion(produccion: ProduccionCreate, db: Session = Depends(get_db)
             })
 
         for ficha in fichas:
-            insumo = db.query(models.InsumoCritico).filter(
-                models.InsumoCritico.id == ficha.insumo_id
-            ).first()
+            insumo = ficha.insumo
             if insumo:
                 consumo = round(ficha.cantidad_necesaria * produccion.cantidad_producida, 4)
                 insumo.stock_actual = round(insumo.stock_actual - consumo, 4)
@@ -1237,7 +1183,7 @@ def listar_produccion(db: Session = Depends(get_db)):
 
 @app.get("/produccion/hoy")
 def produccion_hoy(db: Session = Depends(get_db)):
-    """Estado de producción de hoy para todos los productos."""
+    """Estado de producciÃ³n de hoy para todos los productos."""
     hoy = date.today()
     productos = db.query(models.DimProducto).all()
 
@@ -1278,11 +1224,15 @@ def sugerir_produccion(db: Session = Depends(get_db)):
 
     productos = db.query(models.DimProducto).all()
 
-    # Predicciones para hoy
+    # Predicciones para hoy (usar la mejor por producto = mayor confianza)
     preds_hoy = db.query(models.FactPrediccion).filter(
         models.FactPrediccion.fecha_proyectada == hoy
     ).all()
-    pred_dict = {p.producto_id: p for p in preds_hoy}
+    pred_dict = {}
+    for p in preds_hoy:
+        pid = p.producto_id
+        if pid not in pred_dict or (p.confianza_prediccion or 0) > (pred_dict[pid].confianza_prediccion or 0):
+            pred_dict[pid] = p
 
     # Ventas de hoy
     ventas_hoy = db.query(
@@ -1291,21 +1241,21 @@ def sugerir_produccion(db: Session = Depends(get_db)):
     ).filter(models.FactVenta.fecha == hoy).group_by(models.FactVenta.producto_id).all()
     ventas_dict = {v.producto_id: float(v.total) for v in ventas_hoy}
 
-    # Producción de hoy
+    # ProducciÃ³n de hoy
     prod_hoy = db.query(
         models.FactProduccion.producto_id,
         func.sum(models.FactProduccion.cantidad_producida).label("total"),
     ).filter(models.FactProduccion.fecha == hoy).group_by(models.FactProduccion.producto_id).all()
     prod_dict = {p.producto_id: float(p.total) for p in prod_hoy}
 
-    # Mermas últimos 30 días por producto
+    # Mermas Ãºltimos 30 dÃ­as por producto
     mermas_30d = db.query(
         models.FactMerma.producto_id,
         func.sum(models.FactMerma.cantidad_merma).label("total_merma"),
     ).filter(models.FactMerma.fecha >= desde_30).group_by(models.FactMerma.producto_id).all()
     merma_dict = {m.producto_id: float(m.total_merma) for m in mermas_30d}
 
-    # Ventas últimos 30 días por producto
+    # Ventas Ãºltimos 30 dÃ­as por producto
     ventas_30d = db.query(
         models.FactVenta.producto_id,
         func.sum(models.FactVenta.cantidad_vendida).label("total_ventas"),
@@ -1324,8 +1274,7 @@ def sugerir_produccion(db: Session = Depends(get_db)):
 
         total_merma = merma_dict.get(p.id, 0)
         total_ventas_30d = ventas_30d_dict.get(p.id, 0) or 1
-        denom = total_ventas_30d + total_merma
-        tasa_merma = round(total_merma / denom * 100, 1) if denom > 0 else 0
+        tasa_merma = calcular_tasa_merma(total_ventas_30d, total_merma)
 
         sugerido = max(0, round(demanda_est * (1 + tasa_merma / 100) - vendido - producido))
 
@@ -1341,41 +1290,15 @@ def sugerir_produccion(db: Session = Depends(get_db)):
 
     return sugerencias
 
-if False:
-    @app.delete("/produccion/{produccion_id}")
-    def eliminar_produccion(produccion_id: int, db: Session = Depends(get_db)):
-        """Elimina un registro de producción y recupera el stock de insumos."""
-        prod = db.query(models.FactProduccion).filter(models.FactProduccion.id == produccion_id).first()
-        if not prod:
-            raise HTTPException(status_code=404, detail="Producción no encontrada")
-
-        # Devolver stock de insumos
-        cantidad = prod.cantidad_producida
-        if cantidad > 0:
-            fichas = db.query(models.FichaTecnica).filter(
-                models.FichaTecnica.producto_id == prod.producto_id
-            ).all()
-            for ficha in fichas:
-                insumo = db.query(models.InsumoCritico).filter(
-                    models.InsumoCritico.id == ficha.insumo_id
-                ).first()
-                if insumo:
-                    consumo = round(ficha.cantidad_necesaria * cantidad, 4)
-                    insumo.stock_actual = round(insumo.stock_actual + consumo, 4)
-
-        db.delete(prod)
-        db.commit()
-        return {"mensaje": f"Producción {produccion_id} eliminada. Stock recuperado."}
-
 
 @app.post("/produccion/simular")
 def simular_produccion(sim: SimulacionRequest, db: Session = Depends(get_db)):
-    """Simula escenarios de producción: compara cantidad actual vs planeada, calcula impacto en insumos, costos y merma."""
+    """Simula escenarios de producciÃ³n: compara cantidad actual vs planeada, calcula impacto en insumos, costos y merma."""
     prod = db.query(models.DimProducto).filter(models.DimProducto.id == sim.producto_id).first()
     if not prod:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-    # Tasa de merma histórica (últimos 30 días)
+    # Tasa de merma histÃ³rica (Ãºltimos 30 dÃ­as)
     desde = date.today() - timedelta(days=30)
     total_merma = db.query(func.sum(models.FactMerma.cantidad_merma)).filter(
         models.FactMerma.producto_id == sim.producto_id,
@@ -1385,16 +1308,17 @@ def simular_produccion(sim: SimulacionRequest, db: Session = Depends(get_db)):
         models.FactVenta.producto_id == sim.producto_id,
         models.FactVenta.fecha >= desde,
     ).scalar() or 1
-    denom = total_ventas_30d + total_merma
-    tasa_merma = round(total_merma / denom * 100, 1) if denom > 0 else 0
+    tasa_merma = calcular_tasa_merma(total_ventas_30d, total_merma)
 
-    # Insumos según ficha técnica
-    fichas = db.query(models.FichaTecnica).filter(
+    # Insumos segÃºn ficha tÃ©cnica
+    fichas = db.query(models.FichaTecnica).options(
+        joinedload(models.FichaTecnica.insumo)
+    ).filter(
         models.FichaTecnica.producto_id == sim.producto_id
     ).all()
     insumos = []
     for f in fichas:
-        ins = db.query(models.InsumoCritico).filter(models.InsumoCritico.id == f.insumo_id).first()
+        ins = f.insumo
         if ins:
             insumos.append({
                 "insumo": ins.nombre,
@@ -1432,7 +1356,19 @@ def simular_produccion(sim: SimulacionRequest, db: Session = Depends(get_db)):
     }
 
 
-# ── Mermas ───────────────────────────────────────────────────────────────────
+# â”€â”€ Mermas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+MOTIVOS_MERMA_CANONICOS = [
+    "Sobreproduccion", "Caducidad", "Vencido", "Falla en coccion",
+    "Dano en manipulacion", "Error de pedido", "Devolucion cliente",
+    "Calidad insuficiente", "Otro",
+]
+
+
+@app.get("/mermas/motivos")
+def listar_motivos_merma():
+    return {"motivos": MOTIVOS_MERMA_CANONICOS}
+
 
 @app.post("/mermas/", response_model=MermaResponse)
 def crear_merma(merma: MermaCreate, db: Session = Depends(get_db)):
@@ -1457,7 +1393,7 @@ def listar_mermas(db: Session = Depends(get_db)):
 
 @app.get("/mermas/analisis")
 def analisis_mermas(db: Session = Depends(get_db)):
-    """OE1: Agrupación de mermas por motivo y por producto — ahora incluye costo económico."""
+    """OE1: AgrupaciÃ³n de mermas por motivo y por producto â€” ahora incluye costo econÃ³mico."""
     # Por motivo (con costo)
     por_motivo = db.query(
         models.FactMerma.motivo,
@@ -1514,7 +1450,7 @@ def analisis_mermas(db: Session = Depends(get_db)):
     }
 
 
-# ── Insumos ──────────────────────────────────────────────────────────────────
+# â”€â”€ Insumos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/insumos/", response_model=InsumoResponse)
 def crear_insumo(insumo: InsumoCreate, db: Session = Depends(get_db)):
@@ -1524,8 +1460,8 @@ def crear_insumo(insumo: InsumoCreate, db: Session = Depends(get_db)):
     db.refresh(db_insumo)
     return db_insumo
 
-@app.get("/insumos/", response_model=list[InsumoDetalle])
-def listar_insumos(db: Session = Depends(get_db)):
+@app.get("/insumos/")
+def listar_insumos(skip: int = 0, limit: int = 0, db: Session = Depends(get_db)):
     hace_30 = date.today() - timedelta(days=30)
     consumo = db.query(
         models.FichaTecnica.insumo_id,
@@ -1542,7 +1478,9 @@ def listar_insumos(db: Session = Depends(get_db)):
         func.count(models.OrdenCompra.id).label('total')
     ).filter(models.OrdenCompra.estado == 'pendiente').group_by(models.OrdenCompra.insumo_id).all()
     ord_map = {r.insumo_id: r.total for r in ordenes_pend}
-    insumos = db.query(models.InsumoCritico).all()
+    insumos = db.query(models.InsumoCritico).options(
+        joinedload(models.InsumoCritico.proveedor_principal)
+    ).all()
     result = []
     for i in insumos:
         cd = cons_map.get(i.id, 0)
@@ -1556,13 +1494,14 @@ def listar_insumos(db: Session = Depends(get_db)):
             dias_restantes=int(i.stock_actual / cd) if cd and cd > 0 and i.stock_actual > 0 else None,
             ordenes_pendientes=ord_map.get(i.id, 0),
         ))
+    if limit > 0:
+        total = len(result)
+        return {"items": result[skip:skip + limit], "total": total, "skip": skip, "limit": limit}
     return result
 
 @app.put("/insumos/{insumo_id}", response_model=InsumoResponse)
 def actualizar_insumo(insumo_id: int, datos: InsumoUpdate, db: Session = Depends(get_db)):
-    insumo = db.query(models.InsumoCritico).filter(models.InsumoCritico.id == insumo_id).first()
-    if not insumo:
-        raise HTTPException(status_code=404, detail="Insumo no encontrado")
+    insumo = get_or_404(db, models.InsumoCritico, insumo_id, "Insumo no encontrado")
     for campo, valor in datos.model_dump(exclude_none=True).items():
         setattr(insumo, campo, valor)
     db.commit()
@@ -1585,24 +1524,20 @@ def obtener_alertas_insumos(db: Session = Depends(get_db)):
 
 @app.delete("/insumos/{insumo_id}")
 def eliminar_insumo(insumo_id: int, db: Session = Depends(get_db)):
-    """Elimina un insumo si no tiene fichas técnicas ni órdenes de compra activas."""
-    insumo = db.query(models.InsumoCritico).filter(
-        models.InsumoCritico.id == insumo_id
-    ).first()
-    if not insumo:
-        raise HTTPException(status_code=404, detail="Insumo no encontrado")
+    """Elimina un insumo si no tiene fichas tÃ©cnicas ni Ã³rdenes de compra activas."""
+    insumo = get_or_404(db, models.InsumoCritico, insumo_id, "Insumo no encontrado")
 
-    # Protección referencial: fichas técnicas (recetas)
+    # ProtecciÃ³n referencial: fichas tÃ©cnicas (recetas)
     n_fichas = db.query(models.FichaTecnica).filter(
         models.FichaTecnica.insumo_id == insumo_id
     ).count()
     if n_fichas > 0:
         raise HTTPException(
             status_code=409,
-            detail=f"No se puede eliminar: el insumo está en {n_fichas} ficha(s) técnica(s)."
+            detail=f"No se puede eliminar: el insumo estÃ¡ en {n_fichas} ficha(s) tÃ©cnica(s)."
         )
 
-    # Protección referencial: órdenes de compra pendientes
+    # ProtecciÃ³n referencial: Ã³rdenes de compra pendientes
     n_ordenes = db.query(models.OrdenCompra).filter(
         models.OrdenCompra.insumo_id == insumo_id,
         models.OrdenCompra.estado == "pendiente"
@@ -1624,9 +1559,7 @@ def listar_proveedores(db: Session = Depends(get_db)):
 
 @app.post("/insumos/{insumo_id}/ajustar")
 def ajustar_stock(insumo_id: int, ajuste: AjusteStock, db: Session = Depends(get_db)):
-    insumo = db.query(models.InsumoCritico).filter(models.InsumoCritico.id == insumo_id).first()
-    if not insumo:
-        raise HTTPException(status_code=404, detail="Insumo no encontrado")
+    insumo = get_or_404(db, models.InsumoCritico, insumo_id, "Insumo no encontrado")
     insumo.stock_actual = round(insumo.stock_actual + ajuste.cantidad, 4)
     if insumo.stock_actual < 0:
         db.rollback()
@@ -1635,13 +1568,25 @@ def ajustar_stock(insumo_id: int, ajuste: AjusteStock, db: Session = Depends(get
     return {"mensaje": f"Stock ajustado: {ajuste.cantidad:+.2f} {insumo.unidad_medida}", "stock_nuevo": insumo.stock_actual}
 
 
-# ── Predicciones ─────────────────────────────────────────────────────────────
+# â”€â”€ Predicciones â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/predicciones/", response_model=list[PrediccionResponse])
 def listar_predicciones(db: Session = Depends(get_db)):
-    return db.query(models.FactPrediccion).order_by(
-        models.FactPrediccion.fecha_proyectada.desc()
-    ).limit(150).all()
+    return db.query(
+        models.FactPrediccion.id,
+        models.FactPrediccion.producto_id,
+        models.FactPrediccion.fecha_proyectada,
+        models.FactPrediccion.demanda_estimada,
+        models.FactPrediccion.confianza_prediccion,
+        models.FactPrediccion.algoritmo_utilizado,
+        models.DimProducto.nombre.label("producto_nombre"),
+    ).join(
+        models.DimProducto,
+        models.FactPrediccion.producto_id == models.DimProducto.id,
+    ).order_by(
+        models.FactPrediccion.fecha_proyectada.desc(),
+        models.FactPrediccion.producto_id,
+    ).limit(500).all()
 
 @app.post("/predicciones/generar")
 async def generar_predicciones(n_dias: int = 7, db: Session = Depends(get_db)):
@@ -1657,21 +1602,7 @@ async def generar_predicciones(n_dias: int = 7, db: Session = Depends(get_db)):
 
 
 
-# ── Clima ────────────────────────────────────────────────────────────────────
-
-if False:
-    @app.post("/clima/", response_model=ClimaResponse)
-    def crear_clima(clima: ClimaCreate, db: Session = Depends(get_db)):
-        db_clima = models.DimClima(**clima.model_dump())
-        db.add(db_clima)
-        db.commit()
-        db.refresh(db_clima)
-        return db_clima
-
-if False:
-    @app.get("/clima/", response_model=list[ClimaResponse])
-    def listar_clima(db: Session = Depends(get_db)):
-        return db.query(models.DimClima).order_by(models.DimClima.fecha.desc()).limit(30).all()
+# â”€â”€ Clima â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/clima/{fecha}", response_model=ClimaResponse)
 def obtener_clima(fecha: date, db: Session = Depends(get_db)):
@@ -1681,7 +1612,7 @@ def obtener_clima(fecha: date, db: Session = Depends(get_db)):
     return clima
 
 
-# ── Fichas Técnicas ───────────────────────────────────────────────────────────
+# â”€â”€ Fichas TÃ©cnicas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/fichas-tecnicas/", response_model=FichaTecnicaResponse)
 def crear_ficha_tecnica(ficha: FichaTecnicaCreate, db: Session = Depends(get_db)):
@@ -1695,17 +1626,31 @@ def crear_ficha_tecnica(ficha: FichaTecnicaCreate, db: Session = Depends(get_db)
     db.refresh(db_ficha)
     return db_ficha
 
-@app.get("/fichas-tecnicas/", response_model=list[FichaTecnicaDetallada])
-def listar_fichas_tecnicas(db: Session = Depends(get_db)):
-    return db.query(
+@app.get("/fichas-tecnicas/")
+def listar_fichas_tecnicas(skip: int = 0, limit: int = 0, db: Session = Depends(get_db)):
+    base = db.query(
         models.FichaTecnica.id,
         models.DimProducto.nombre.label("producto_nombre"),
         models.InsumoCritico.nombre.label("insumo_nombre"),
         models.FichaTecnica.cantidad_necesaria,
-    ).join(models.DimProducto).join(models.InsumoCritico).all()
+    ).join(models.DimProducto).join(models.InsumoCritico)
+
+    if limit > 0:
+        total = base.count()
+        rows = base.offset(skip).limit(limit).all()
+        return {
+            "items": [
+                {"id": r.id, "producto_nombre": r.producto_nombre,
+                 "insumo_nombre": r.insumo_nombre, "cantidad_necesaria": r.cantidad_necesaria}
+                for r in rows
+            ],
+            "total": total, "skip": skip, "limit": limit,
+        }
+
+    return base.all()
 
 
-# ── Proveedores ───────────────────────────────────────────────────────────────
+# â”€â”€ Proveedores â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/proveedores/", response_model=ProveedorResponse)
 def crear_proveedor(proveedor: ProveedorCreate, db: Session = Depends(get_db)):
@@ -1715,12 +1660,335 @@ def crear_proveedor(proveedor: ProveedorCreate, db: Session = Depends(get_db)):
     db.refresh(db_prov)
     return db_prov
 
-@app.get("/proveedores/", response_model=list[ProveedorResponse])
-def listar_proveedores(db: Session = Depends(get_db)):
-    return db.query(models.Proveedor).all()
+@app.get("/proveedores/{proveedor_id}", response_model=ProveedorDetalle)
+def obtener_proveedor(proveedor_id: int, db: Session = Depends(get_db)):
+    prov = get_or_404(db, models.Proveedor, proveedor_id, "Proveedor no encontrado")
+    precios = db.query(
+        models.ProveedorInsumo.id,
+        models.ProveedorInsumo.proveedor_id,
+        models.Proveedor.nombre.label("proveedor_nombre"),
+        models.ProveedorInsumo.insumo_id,
+        models.InsumoCritico.nombre.label("insumo_nombre"),
+        models.InsumoCritico.unidad_medida,
+        models.ProveedorInsumo.precio_unitario,
+    ).join(
+        models.Proveedor, models.ProveedorInsumo.proveedor_id == models.Proveedor.id
+    ).join(
+        models.InsumoCritico, models.ProveedorInsumo.insumo_id == models.InsumoCritico.id
+    ).filter(
+        models.ProveedorInsumo.proveedor_id == proveedor_id
+    ).all()
+    return ProveedorDetalle(
+        id=prov.id, nombre=prov.nombre, contacto=prov.contacto,
+        telefono=prov.telefono, email=prov.email,
+        insumos_precios=[ProveedorInsumoResponse.model_validate(p._asdict() if hasattr(p, '_asdict') else p) for p in precios]
+    )
+
+@app.put("/proveedores/{proveedor_id}", response_model=ProveedorResponse)
+def actualizar_proveedor(proveedor_id: int, data: ProveedorUpdate, db: Session = Depends(get_db)):
+    prov = get_or_404(db, models.Proveedor, proveedor_id, "Proveedor no encontrado")
+    for k, v in data.model_dump(exclude_unset=True).items():
+        setattr(prov, k, v)
+    db.commit()
+    db.refresh(prov)
+    return prov
+
+@app.delete("/proveedores/{proveedor_id}")
+def eliminar_proveedor(proveedor_id: int, db: Session = Depends(get_db)):
+    prov = get_or_404(db, models.Proveedor, proveedor_id, "Proveedor no encontrado")
+    n_ordenes = db.query(models.OrdenCompra).filter(
+        models.OrdenCompra.proveedor_id == proveedor_id,
+        models.OrdenCompra.estado.in_(["pendiente", "confirmado"])
+    ).count()
+    if n_ordenes > 0:
+        raise HTTPException(status_code=409, detail=f"No se puede eliminar: hay {n_ordenes} orden(es) pendiente(s) para este proveedor.")
+    db.query(models.ProveedorInsumo).filter(models.ProveedorInsumo.proveedor_id == proveedor_id).delete()
+    nombre = prov.nombre
+    db.delete(prov)
+    db.commit()
+    return {"mensaje": f"Proveedor '{nombre}' eliminado correctamente."}
+
+@app.get("/proveedores/{proveedor_id}/precios", response_model=list[ProveedorInsumoResponse])
+def listar_precios_proveedor(proveedor_id: int, db: Session = Depends(get_db)):
+    get_or_404(db, models.Proveedor, proveedor_id, "Proveedor no encontrado")
+    rows = db.query(
+        models.ProveedorInsumo.id,
+        models.ProveedorInsumo.proveedor_id,
+        models.Proveedor.nombre.label("proveedor_nombre"),
+        models.ProveedorInsumo.insumo_id,
+        models.InsumoCritico.nombre.label("insumo_nombre"),
+        models.InsumoCritico.unidad_medida,
+        models.ProveedorInsumo.precio_unitario,
+    ).join(
+        models.Proveedor, models.ProveedorInsumo.proveedor_id == models.Proveedor.id
+    ).join(
+        models.InsumoCritico, models.ProveedorInsumo.insumo_id == models.InsumoCritico.id
+    ).filter(
+        models.ProveedorInsumo.proveedor_id == proveedor_id
+    ).all()
+    return [ProveedorInsumoResponse.model_validate(r._asdict() if hasattr(r, '_asdict') else r) for r in rows]
+
+@app.post("/proveedores/{proveedor_id}/precios", response_model=ProveedorInsumoResponse)
+def crear_actualizar_precio_proveedor(proveedor_id: int, data: ProveedorInsumoCreate, db: Session = Depends(get_db)):
+    get_or_404(db, models.Proveedor, proveedor_id, "Proveedor no encontrado")
+    get_or_404(db, models.InsumoCritico, data.insumo_id, "Insumo no encontrado")
+    existing = db.query(models.ProveedorInsumo).filter(
+        models.ProveedorInsumo.proveedor_id == proveedor_id,
+        models.ProveedorInsumo.insumo_id == data.insumo_id,
+    ).first()
+    if existing:
+        existing.precio_unitario = data.precio_unitario
+        db.commit()
+        db.refresh(existing)
+        pi = existing
+    else:
+        pi = models.ProveedorInsumo(proveedor_id=proveedor_id, insumo_id=data.insumo_id, precio_unitario=data.precio_unitario)
+        db.add(pi)
+        db.commit()
+        db.refresh(pi)
+    prov = db.query(models.Proveedor).filter(models.Proveedor.id == proveedor_id).first()
+    ins = db.query(models.InsumoCritico).filter(models.InsumoCritico.id == data.insumo_id).first()
+    return ProveedorInsumoResponse(
+        id=pi.id, proveedor_id=pi.proveedor_id, proveedor_nombre=prov.nombre,
+        insumo_id=pi.insumo_id, insumo_nombre=ins.nombre, unidad_medida=ins.unidad_medida,
+        precio_unitario=pi.precio_unitario,
+    )
+
+@app.delete("/proveedores/{proveedor_id}/precios/{insumo_id}")
+def eliminar_precio_proveedor(proveedor_id: int, insumo_id: int, db: Session = Depends(get_db)):
+    pi = db.query(models.ProveedorInsumo).filter(
+        models.ProveedorInsumo.proveedor_id == proveedor_id,
+        models.ProveedorInsumo.insumo_id == insumo_id,
+    ).first()
+    if not pi:
+        raise HTTPException(status_code=404, detail="Precio no encontrado para ese proveedor/insumo")
+    db.delete(pi)
+    db.commit()
+    return {"mensaje": "Precio eliminado correctamente."}
+
+@app.get("/insumos/{insumo_id}/precios", response_model=list[ProveedorInsumoResponse])
+def listar_precios_insumo(insumo_id: int, db: Session = Depends(get_db)):
+    get_or_404(db, models.InsumoCritico, insumo_id, "Insumo no encontrado")
+    rows = db.query(
+        models.ProveedorInsumo.id,
+        models.ProveedorInsumo.proveedor_id,
+        models.Proveedor.nombre.label("proveedor_nombre"),
+        models.ProveedorInsumo.insumo_id,
+        models.InsumoCritico.nombre.label("insumo_nombre"),
+        models.InsumoCritico.unidad_medida,
+        models.ProveedorInsumo.precio_unitario,
+    ).join(
+        models.Proveedor, models.ProveedorInsumo.proveedor_id == models.Proveedor.id
+    ).join(
+        models.InsumoCritico, models.ProveedorInsumo.insumo_id == models.InsumoCritico.id
+    ).filter(
+        models.ProveedorInsumo.insumo_id == insumo_id
+    ).order_by(models.ProveedorInsumo.precio_unitario.asc()).all()
+    return [ProveedorInsumoResponse.model_validate(r._asdict() if hasattr(r, '_asdict') else r) for r in rows]
 
 
-# ── Órdenes de Compra ─────────────────────────────────────────────────────────
+# â”€â”€ Pan del DÃ­a Anterior (Pan Pasado) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+CATEGORIAS_PAN = ["Pan de mesa", "Pan especial"]
+
+@app.get("/pan-pasado/")
+def listar_pan_pasado(db: Session = Depends(get_db)):
+    rows = db.query(
+        models.PanPasado.id,
+        models.PanPasado.producto_id,
+        models.DimProducto.nombre.label("producto_nombre"),
+        models.PanPasado.fecha_origen,
+        models.PanPasado.cantidad,
+        models.PanPasado.precio_unitario,
+        models.PanPasado.cantidad_vendida,
+        models.PanPasado.estado,
+    ).join(
+        models.DimProducto, models.PanPasado.producto_id == models.DimProducto.id
+    ).order_by(
+        models.PanPasado.estado.asc(),
+        models.PanPasado.created_at.desc(),
+    ).all()
+    result = []
+    for r in rows:
+        item = r._asdict() if hasattr(r, '_asdict') else r
+        item["total_venta"] = round((item.get("cantidad_vendida") or 0) * (item.get("precio_unitario") or 0), 2)
+        result.append(item)
+    return result
+
+@app.get("/pan-pasado/disponible")
+def listar_pan_pasado_disponible(db: Session = Depends(get_db)):
+    rows = db.query(
+        models.PanPasado.id,
+        models.PanPasado.producto_id,
+        models.DimProducto.nombre.label("producto_nombre"),
+        models.DimProducto.categoria,
+        models.PanPasado.fecha_origen,
+        models.PanPasado.cantidad,
+        models.PanPasado.precio_unitario,
+        models.PanPasado.cantidad_vendida,
+        models.PanPasado.estado,
+    ).join(
+        models.DimProducto, models.PanPasado.producto_id == models.DimProducto.id
+    ).filter(
+        models.PanPasado.estado == "disponible",
+        models.PanPasado.cantidad > models.PanPasado.cantidad_vendida,
+    ).order_by(
+        models.PanPasado.fecha_origen.asc(),
+    ).all()
+    result = []
+    for r in rows:
+        item = r._asdict() if hasattr(r, '_asdict') else r
+        item["disponible"] = (item.get("cantidad") or 0) - (item.get("cantidad_vendida") or 0)
+        result.append(item)
+    return result
+
+@app.get("/pan-pasado/precio-calcular/{producto_id}")
+def calcular_precio_pan_pasado(producto_id: int, db: Session = Depends(get_db)):
+    prod = get_or_404(db, models.DimProducto, producto_id, "Producto no encontrado")
+    precio = round(prod.costo * 1.10, 2)
+    return {"producto_id": producto_id, "producto_nombre": prod.nombre, "costo": prod.costo, "precio_sugerido": precio}
+
+@app.post("/pan-pasado/", response_model=PanPasadoResponse)
+def crear_pan_pasado(data: PanPasadoCreate, db: Session = Depends(get_db)):
+    prod = get_or_404(db, models.DimProducto, data.producto_id, "Producto no encontrado")
+    if prod.categoria not in CATEGORIAS_PAN:
+        raise HTTPException(status_code=400, detail=f"Producto no es un pan (categoria: {prod.categoria}). Solo se permite: {', '.join(CATEGORIAS_PAN)}")
+    precio = round(prod.costo * 1.10, 2)
+    pp = models.PanPasado(
+        producto_id=data.producto_id,
+        fecha_origen=data.fecha_origen,
+        cantidad=data.cantidad,
+        precio_unitario=precio,
+    )
+    db.add(pp)
+    db.commit()
+    db.refresh(pp)
+    return PanPasadoResponse(
+        id=pp.id, producto_id=pp.producto_id, producto_nombre=prod.nombre,
+        fecha_origen=pp.fecha_origen, cantidad=pp.cantidad,
+        precio_unitario=pp.precio_unitario, cantidad_vendida=pp.cantidad_vendida,
+        estado=pp.estado, total_venta=0,
+    )
+
+@app.put("/pan-pasado/{pan_id}")
+def actualizar_pan_pasado(pan_id: int, data: PanPasadoUpdate, db: Session = Depends(get_db)):
+    pp = get_or_404(db, models.PanPasado, pan_id, "Pan pasado no encontrado")
+    if data.cantidad is not None:
+        pp.cantidad = data.cantidad
+    if data.estado is not None:
+        pp.estado = data.estado
+    db.commit()
+    db.refresh(pp)
+    return {"mensaje": "Pan pasado actualizado correctamente"}
+
+@app.delete("/pan-pasado/{pan_id}")
+def eliminar_pan_pasado(pan_id: int, db: Session = Depends(get_db)):
+    pp = get_or_404(db, models.PanPasado, pan_id, "Pan pasado no encontrado")
+    db.delete(pp)
+    db.commit()
+    return {"mensaje": "Registro de pan pasado eliminado correctamente"}
+
+@app.post("/pan-pasado/{pan_id}/vender")
+def vender_pan_pasado(pan_id: int, venta: PanPasadoVender, db: Session = Depends(get_db)):
+    pp = get_or_404(db, models.PanPasado, pan_id, "Pan pasado no encontrado")
+    if pp.estado != "disponible":
+        raise HTTPException(status_code=400, detail="Este pan ya no estÃ¡ disponible para la venta")
+    disponible = pp.cantidad - (pp.cantidad_vendida or 0)
+    if venta.cantidad_vender <= 0 or venta.cantidad_vender > disponible:
+        raise HTTPException(status_code=400, detail=f"Cantidad invÃ¡lida. Disponible: {disponible}")
+
+    hoy = date.today()
+    nueva_venta = models.FactVenta(
+        producto_id=pp.producto_id,
+        fecha=hoy,
+        cantidad_vendida=venta.cantidad_vender,
+        precio_unitario=pp.precio_unitario,
+        metodo_pago=venta.metodo_pago or "efectivo",
+        vendedor_id=venta.vendedor_id,
+    )
+    db.add(nueva_venta)
+    pp.cantidad_vendida = (pp.cantidad_vendida or 0) + venta.cantidad_vender
+    if pp.cantidad_vendida >= pp.cantidad:
+        pp.estado = "vendido"
+    db.commit()
+    db.refresh(pp)
+    return {
+        "mensaje": f"Venta registrada: {venta.cantidad_vender} unidades de {pp.producto.nombre}",
+        "cantidad_vendida": pp.cantidad_vendida,
+        "disponible_restante": pp.cantidad - pp.cantidad_vendida,
+        "total_soles": round(venta.cantidad_vender * pp.precio_unitario, 2),
+    }
+
+@app.post("/pan-pasado/auto-generar")
+def auto_generar_pan_pasado(dias: int = 7, db: Session = Depends(get_db)):
+    """Escanea los Ãºltimos N dÃ­as: crea PanPasado para pan no vendido y expira los mayores a 7 dÃ­as como pÃ©rdida."""
+    hoy = date.today()
+    creados = 0
+    expirados = 0
+    productos_pan = db.query(models.DimProducto).filter(
+        models.DimProducto.categoria.in_(["Pan de mesa", "Pan especial"])
+    ).all()
+
+    # â”€â”€ 1. Expirados: pan pasado con mÃ¡s de 7 dÃ­as desde fecha_origen â”€â”€
+    fecha_limite = hoy - timedelta(days=7)
+    por_expiar = db.query(models.PanPasado).filter(
+        models.PanPasado.fecha_origen < fecha_limite,
+        models.PanPasado.estado == "disponible",
+        models.PanPasado.cantidad > models.PanPasado.cantidad_vendida,
+    ).all()
+    for pp in por_expiar:
+        no_vendido = round(pp.cantidad - (pp.cantidad_vendida or 0), 2)
+        if no_vendido > 0:
+            db.add(models.FactMerma(
+                producto_id=pp.producto_id,
+                fecha=hoy,
+                cantidad_merma=no_vendido,
+                motivo="Pan no vendido (vencido)",
+            ))
+            expirados += 1
+        pp.estado = "expirado"
+
+    # â”€â”€ 2. Nuevos registros: pan no vendido de los Ãºltimos N dÃ­as â”€â”€
+    for dia in range(dias):
+        fecha = hoy - timedelta(days=dia)
+        for prod in productos_pan:
+            producido = db.query(func.coalesce(func.sum(models.FactProduccion.cantidad_producida), 0)).filter(
+                models.FactProduccion.producto_id == prod.id,
+                models.FactProduccion.fecha == fecha,
+            ).scalar()
+            vendido = db.query(func.coalesce(func.sum(models.FactVenta.cantidad_vendida), 0)).filter(
+                models.FactVenta.producto_id == prod.id,
+                models.FactVenta.fecha == fecha,
+            ).scalar()
+            excedente = round(producido - vendido, 2)
+            if excedente <= 0:
+                continue
+            existe = db.query(models.PanPasado).filter(
+                models.PanPasado.producto_id == prod.id,
+                models.PanPasado.fecha_origen == fecha,
+            ).first()
+            if existe:
+                continue
+            precio = round(prod.costo * 1.10, 2)
+            db.add(models.PanPasado(
+                producto_id=prod.id,
+                fecha_origen=fecha,
+                cantidad=excedente,
+                precio_unitario=precio,
+            ))
+            creados += 1
+    db.commit()
+    partes = []
+    if creados:
+        partes.append(f"{creados} nuevo(s) registrado(s)")
+    if expirados:
+        partes.append(f"{expirados} expirado(s) â†’ merma")
+    if not partes:
+        partes.append("sin novedad")
+    return {"creados": creados, "expirados": expirados, "mensaje": "Pan recuperado: " + ", ".join(partes)}
+
+
+# â”€â”€ Ã“rdenes de Compra â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/ordenes-compra/", response_model=OrdenCompraResponse)
 def crear_orden_compra(orden: OrdenCompraCreate, db: Session = Depends(get_db)):
@@ -1734,9 +2002,9 @@ def crear_orden_compra(orden: OrdenCompraCreate, db: Session = Depends(get_db)):
     db.refresh(db_orden)
     return db_orden
 
-@app.get("/ordenes-compra/", response_model=list[OrdenCompraDetallada])
-def listar_ordenes_compra(db: Session = Depends(get_db)):
-    rows = db.query(
+@app.get("/ordenes-compra/")
+def listar_ordenes_compra(skip: int = 0, limit: int = 0, db: Session = Depends(get_db)):
+    base = db.query(
         models.OrdenCompra.id,
         models.Proveedor.nombre.label("proveedor_nombre"),
         models.InsumoCritico.nombre.label("insumo_nombre"),
@@ -1751,17 +2019,35 @@ def listar_ordenes_compra(db: Session = Depends(get_db)):
         models.Proveedor, models.OrdenCompra.proveedor_id == models.Proveedor.id
     ).join(
         models.InsumoCritico, models.OrdenCompra.insumo_id == models.InsumoCritico.id
-    ).order_by(models.OrdenCompra.created_at.desc()).all()
+    ).order_by(models.OrdenCompra.created_at.desc())
+
+    if limit > 0:
+        total = base.count()
+        rows = base.offset(skip).limit(limit).all()
+        return {
+            "items": [
+                {
+                    "id": r.id, "proveedor_nombre": r.proveedor_nombre,
+                    "insumo_nombre": r.insumo_nombre, "fecha_orden": r.fecha_orden,
+                    "cantidad": r.cantidad, "precio_unitario": r.precio_unitario,
+                    "estado": r.estado, "es_sugerida": r.es_sugerida,
+                    "cantidad_sugerida_original": r.cantidad_sugerida_original,
+                    "fecha_necesaria": r.fecha_necesaria,
+                }
+                for r in rows
+            ],
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+        }
+
+    rows = base.all()
     return [
         {
-            "id": r.id,
-            "proveedor_nombre": r.proveedor_nombre,
-            "insumo_nombre": r.insumo_nombre,
-            "fecha_orden": r.fecha_orden,
-            "cantidad": r.cantidad,
-            "precio_unitario": r.precio_unitario,
-            "estado": r.estado,
-            "es_sugerida": r.es_sugerida,
+            "id": r.id, "proveedor_nombre": r.proveedor_nombre,
+            "insumo_nombre": r.insumo_nombre, "fecha_orden": r.fecha_orden,
+            "cantidad": r.cantidad, "precio_unitario": r.precio_unitario,
+            "estado": r.estado, "es_sugerida": r.es_sugerida,
             "cantidad_sugerida_original": r.cantidad_sugerida_original,
             "fecha_necesaria": r.fecha_necesaria,
         }
@@ -1770,11 +2056,9 @@ def listar_ordenes_compra(db: Session = Depends(get_db)):
 
 @app.put("/ordenes-compra/{orden_id}")
 def editar_orden_compra(orden_id: int, datos: OrdenCompraUpdate, db: Session = Depends(get_db)):
-    orden = db.query(models.OrdenCompra).filter(models.OrdenCompra.id == orden_id).first()
-    if not orden:
-        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    orden = get_or_404(db, models.OrdenCompra, orden_id, "Orden no encontrada")
     if orden.estado != "pendiente":
-        raise HTTPException(status_code=400, detail="Solo se pueden editar órdenes pendientes")
+        raise HTTPException(status_code=400, detail="Solo se pueden editar Ã³rdenes pendientes")
     if datos.cantidad is not None:
         orden.cantidad = datos.cantidad
     if datos.precio_unitario is not None:
@@ -1788,11 +2072,9 @@ def editar_orden_compra(orden_id: int, datos: OrdenCompraUpdate, db: Session = D
 
 @app.post("/ordenes-compra/{orden_id}/confirmar")
 def confirmar_orden_compra(orden_id: int, bg_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    orden = db.query(models.OrdenCompra).filter(models.OrdenCompra.id == orden_id).first()
-    if not orden:
-        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    orden = get_or_404(db, models.OrdenCompra, orden_id, "Orden no encontrada")
     if orden.estado != "pendiente":
-        raise HTTPException(status_code=400, detail="Solo se pueden confirmar órdenes pendientes")
+        raise HTTPException(status_code=400, detail="Solo se pueden confirmar Ã³rdenes pendientes")
     orden.estado = "confirmado"
     db.commit()
     bg_tasks.add_task(enviar_pdf_orden_individual, orden_id)
@@ -1800,9 +2082,7 @@ def confirmar_orden_compra(orden_id: int, bg_tasks: BackgroundTasks, db: Session
 
 @app.post("/ordenes-compra/{orden_id}/cancelar")
 def cancelar_orden_compra(orden_id: int, db: Session = Depends(get_db)):
-    orden = db.query(models.OrdenCompra).filter(models.OrdenCompra.id == orden_id).first()
-    if not orden:
-        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    orden = get_or_404(db, models.OrdenCompra, orden_id, "Orden no encontrada")
     if orden.estado in ["recibido", "cancelado"]:
         raise HTTPException(status_code=400, detail="La orden ya fue recibida o cancelada")
     orden.estado = "cancelado"
@@ -1811,17 +2091,26 @@ def cancelar_orden_compra(orden_id: int, db: Session = Depends(get_db)):
 
 @app.post("/ordenes-compra/sugerir")
 def sugerir_ordenes_compra(bg_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """Genera órdenes de compra sugeridas para insumos con stock < mínimo.
-    Calcula la cantidad necesaria según predicciones ML para mañana."""
+    """Genera Ã³rdenes de compra sugeridas para insumos con stock < mÃ­nimo.
+    Calcula la cantidad necesaria segÃºn predicciones ML para maÃ±ana."""
     manana = date.today() + timedelta(days=1)
     insumos = db.query(models.InsumoCritico).all()
     hoy = date.today()
     creadas = 0
 
+    # Predicciones para maÃ±ana (usar la mejor por producto = mayor confianza)
     predicciones_manana = db.query(models.FactPrediccion).filter(
         models.FactPrediccion.fecha_proyectada == manana
+    ).order_by(
+        models.FactPrediccion.producto_id,
+        models.FactPrediccion.confianza_prediccion.desc().nullslast(),
     ).all()
-    pred_dict = {p.producto_id: p.demanda_estimada for p in predicciones_manana}
+    pred_dict = {}
+    seen_pids = set()
+    for p in predicciones_manana:
+        if p.producto_id not in seen_pids:
+            pred_dict[p.producto_id] = p.demanda_estimada
+            seen_pids.add(p.producto_id)
 
     fichas = db.query(models.FichaTecnica).all()
     consumo_por_insumo = {}
@@ -1832,33 +2121,54 @@ def sugerir_ordenes_compra(bg_tasks: BackgroundTasks, db: Session = Depends(get_
 
     ids_creados = []
 
+    pendientes_set = {
+        r.insumo_id for r in db.query(models.OrdenCompra.insumo_id).filter(
+            models.OrdenCompra.estado.in_(["pendiente", "confirmado"])
+        ).all()
+    }
+
+    # Mapa de precios: insumo_id -> [(proveedor_id, precio_unitario)]
+    precios_db = db.query(models.ProveedorInsumo).all()
+    precios_por_insumo = {}
+    for p in precios_db:
+        precios_por_insumo.setdefault(p.insumo_id, []).append((p.proveedor_id, p.precio_unitario))
+
     for insumo in insumos:
         if insumo.stock_actual >= insumo.stock_minimo:
             continue
-        if not insumo.proveedor_id:
+
+        mejores = precios_por_insumo.get(insumo.id, [])
+        if not mejores:
             continue
 
+        # Elegir el proveedor mÃ¡s barato
+        mejor_prov, mejor_precio = min(mejores, key=lambda x: x[1])
+
         necesidad_manana = consumo_por_insumo.get(insumo.id, 0)
-        cantidad_sugerida = max(
+        def redondear_insumo(val):
+            decimal = val - int(val)
+            if decimal < 0.01:
+                return int(val)
+            if decimal < 0.5:
+                return int(val) + 0.5
+            return int(val) + 1
+        cantidad_sugerida = redondear_insumo(max(
             insumo.stock_minimo * 2 - insumo.stock_actual,
             necesidad_manana - insumo.stock_actual,
             0
-        )
+        ))
         if cantidad_sugerida <= 0:
             continue
 
-        existe_pendiente = db.query(models.OrdenCompra).filter(
-            models.OrdenCompra.insumo_id == insumo.id,
-            models.OrdenCompra.estado.in_(["pendiente", "confirmado"]),
-        ).first()
-        if existe_pendiente:
+        if insumo.id in pendientes_set:
             continue
 
         nueva = models.OrdenCompra(
-            proveedor_id=insumo.proveedor_id,
+            proveedor_id=mejor_prov,
             insumo_id=insumo.id,
             fecha_orden=hoy,
             cantidad=cantidad_sugerida,
+            precio_unitario=mejor_precio,
             estado="pendiente",
             es_sugerida=True,
             cantidad_sugerida_original=cantidad_sugerida,
@@ -1878,7 +2188,7 @@ def sugerir_ordenes_compra(bg_tasks: BackgroundTasks, db: Session = Depends(get_
 
 @app.post("/ordenes-compra/sugerir-urgente")
 def sugerir_ordenes_urgente(body: list[dict], db: Session = Depends(get_db)):
-    """Crea órdenes de compra sugeridas para insumos específicos que faltaron en producción."""
+    """Crea Ã³rdenes de compra sugeridas para insumos especÃ­ficos que faltaron en producciÃ³n."""
     manana = date.today() + timedelta(days=1)
     hoy = date.today()
     creadas = 0
@@ -1916,7 +2226,7 @@ def sugerir_ordenes_urgente(body: list[dict], db: Session = Depends(get_db)):
         creadas += 1
 
     db.commit()
-    return {"ordenes_sugeridas": creadas, "mensaje": f"{creadas} orden(es) sugerida(s) creada(s)" if creadas else "No se crearon órdenes"}
+    return {"ordenes_sugeridas": creadas, "mensaje": f"{creadas} orden(es) sugerida(s) creada(s)" if creadas else "No se crearon Ã³rdenes"}
 
 @app.post("/ordenes-compra/{orden_id}/recibir")
 def recibir_orden(orden_id: int, db: Session = Depends(get_db)):
@@ -1950,28 +2260,37 @@ def recibir_orden(orden_id: int, db: Session = Depends(get_db)):
         "estado": "recibido"
     }
 
-# ── Validación de Predicciones (OE6) ──────────────────────────────────────────
+# â”€â”€ ValidaciÃ³n de Predicciones (OE6) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/predicciones/vs-real")
 def obtener_comparacion_predicciones(dias: int = 30, db: Session = Depends(get_db)):
     fecha_limite = date.today() - timedelta(days=dias)
-    # Buscar pares de (Predicción, Venta) para el mismo producto y fecha
+    # Buscar pares de (PredicciÃ³n, Venta) para el mismo producto y fecha
     pares = db.query(models.FactPrediccion, models.FactVenta, models.DimProducto.nombre)\
               .join(models.FactVenta, 
                     (models.FactPrediccion.producto_id == models.FactVenta.producto_id) & 
                     (models.FactPrediccion.fecha_proyectada == models.FactVenta.fecha))\
               .join(models.DimProducto, models.FactPrediccion.producto_id == models.DimProducto.id)\
               .filter(models.FactPrediccion.fecha_proyectada >= fecha_limite)\
-              .all()
+              .order_by(
+                  models.FactPrediccion.producto_id,
+                  models.FactPrediccion.fecha_proyectada,
+                  models.FactPrediccion.confianza_prediccion.desc().nullslast(),
+              ).all()
     
+    # Conservar solo la mejor predicciÃ³n por (producto, fecha)
     res = []
+    seen_pf = set()
     for p, v, nombre in pares:
-        res.append({
-            "producto_nombre": nombre,
-            "fecha": p.fecha_proyectada,
-            "predicho": p.demanda_estimada,
-            "real": v.cantidad_vendida
-        })
+        key = (p.producto_id, p.fecha_proyectada)
+        if key not in seen_pf:
+            seen_pf.add(key)
+            res.append({
+                "producto_nombre": nombre,
+                "fecha": p.fecha_proyectada,
+                "predicho": p.demanda_estimada,
+                "real": v.cantidad_vendida
+            })
     
     if not res:
         return {"mae_global": 0, "detalle": []}
@@ -1985,18 +2304,32 @@ def recomendaciones_modelo(db: Session = Depends(get_db)):
     """Genera recomendaciones contextuales basadas en predicciones ML, clima y factores estacionales."""
     hoy = date.today()
 
-    # Predicciones próximos 7 días
+    # Predicciones prÃ³ximos 7 dÃ­as (mejor por producto+fecha)
     preds = db.query(
         models.FactPrediccion, models.DimProducto.nombre, models.DimProducto.id,
     ).join(models.DimProducto).filter(
         models.FactPrediccion.fecha_proyectada >= hoy,
         models.FactPrediccion.fecha_proyectada <= hoy + timedelta(days=7),
-    ).order_by(models.FactPrediccion.fecha_proyectada).all()
+    ).order_by(
+        models.FactPrediccion.fecha_proyectada,
+        models.FactPrediccion.producto_id,
+        models.FactPrediccion.confianza_prediccion.desc().nullslast(),
+    ).all()
 
     if not preds:
         return {"fecha_generacion": str(hoy), "recomendaciones": []}
 
-    # Promedio histórico por día de semana (por producto)
+    # Conservar solo la mejor predicciÃ³n por (producto, fecha)
+    mejores_preds = []
+    seen_pf = set()
+    for pred, prod_nombre, prod_id in preds:
+        key = (prod_id, pred.fecha_proyectada)
+        if key not in seen_pf:
+            seen_pf.add(key)
+            mejores_preds.append((pred, prod_nombre, prod_id))
+    preds = mejores_preds
+
+    # Promedio histÃ³rico por dÃ­a de semana (por producto)
     desde_hist = hoy - timedelta(days=90)
     hist = db.query(
         models.FactVenta.producto_id,
@@ -2010,7 +2343,7 @@ def recomendaciones_modelo(db: Session = Depends(get_db)):
     for r in hist:
         prom_dict.setdefault(int(r.producto_id), {})[int(r.dia_semana)] = float(r.promedio)
 
-    # Clima en los próximos días
+    # Clima en los prÃ³ximos dÃ­as
     climas = db.query(models.DimClima).filter(
         models.DimClima.fecha >= hoy,
         models.DimClima.fecha <= hoy + timedelta(days=7),
@@ -2033,7 +2366,7 @@ def recomendaciones_modelo(db: Session = Depends(get_db)):
             continue
 
         # Determinar factor
-        dia_nombres = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        dia_nombres = ["lunes", "martes", "miÃ©rcoles", "jueves", "viernes", "sÃ¡bado", "domingo"]
         dia_nombre = dia_nombres[dia_semana]
         clima = clima_dict.get(fecha_str)
 
@@ -2052,9 +2385,9 @@ def recomendaciones_modelo(db: Session = Depends(get_db)):
 
         tipo = "aumentar" if dif_pct > 0 else "reducir"
         msg = (
-            f"{'📈' if dif_pct > 0 else '📉'} {prod_nombre} — "
+            f"{'ðŸ“ˆ' if dif_pct > 0 else 'ðŸ“‰'} {prod_nombre} â€” "
             f"{'+' if dif_pct > 0 else ''}{dif_pct}% para {dia_nombre} por {razon}. "
-            f"{'Aumente' if dif_pct > 0 else 'Reduzca'} producción a {pred.demanda_estimada:.0f} uds."
+            f"{'Aumente' if dif_pct > 0 else 'Reduzca'} producciÃ³n a {pred.demanda_estimada:.0f} uds."
         )
 
         recomendaciones.append({
@@ -2076,7 +2409,7 @@ def recomendaciones_modelo(db: Session = Depends(get_db)):
     }
 
 
-# ── Dashboard KPIs ────────────────────────────────────────────────────────────
+# â”€â”€ Dashboard KPIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/dashboard/resumen")
 def dashboard_resumen(db: Session = Depends(get_db)):
@@ -2094,12 +2427,13 @@ def dashboard_resumen(db: Session = Depends(get_db)):
         models.FactVenta.fecha == ayer
     ).scalar() or 0
 
-    # Mermas hoy
-    mermas_hoy = db.query(func.sum(models.FactMerma.cantidad_merma)).filter(
-        models.FactMerma.fecha == hoy
-    ).scalar() or 0
+    # Mermas hoy (dinamico: producido - vendido - pan recuperado)
+    prod_hoy_r = db.query(func.sum(models.FactProduccion.cantidad_producida)).filter(models.FactProduccion.fecha == hoy).scalar() or 0
+    vend_hoy_r = db.query(func.sum(models.FactVenta.cantidad_vendida)).filter(models.FactVenta.fecha == hoy).scalar() or 0
+    pp_hoy_r = db.query(func.sum(models.PanPasado.cantidad)).filter(models.PanPasado.fecha_origen == hoy).scalar() or 0
+    mermas_hoy = max(0, prod_hoy_r - vend_hoy_r - pp_hoy_r)
 
-    # Mermas últimos 30 días
+    # Mermas Ãºltimos 30 dÃ­as
     desde_30 = hoy - timedelta(days=30)
     mermas_30d = db.query(func.sum(models.FactMerma.cantidad_merma)).filter(
         models.FactMerma.fecha >= desde_30
@@ -2109,9 +2443,13 @@ def dashboard_resumen(db: Session = Depends(get_db)):
         models.FactVenta.fecha >= desde_30
     ).scalar() or 1
 
-    pct_merma_30d = round((mermas_30d / (ventas_30d + mermas_30d)) * 100, 2)
+    pct_merma_30d = calcular_tasa_merma(ventas_30d, mermas_30d, precision=2)
+    mermas_7d_acum = db.query(func.sum(models.FactMerma.cantidad_merma)).filter(
+        models.FactMerma.fecha >= (hoy - timedelta(days=7))
+    ).scalar() or 0
+    mermas_totales = db.query(func.sum(models.FactMerma.cantidad_merma)).scalar() or 0
 
-    # Ventas últimos 7 días
+    # Ventas Ãºltimos 7 dÃ­as
     desde_7 = hoy - timedelta(days=7)
     ventas_7d = db.query(func.sum(models.FactVenta.cantidad_vendida)).filter(
         models.FactVenta.fecha >= desde_7
@@ -2122,16 +2460,32 @@ def dashboard_resumen(db: Session = Depends(get_db)):
         models.InsumoCritico.stock_actual < models.InsumoCritico.stock_minimo
     ).count()
 
-    # Predicciones próximos 7 días
-    predicciones_prox = db.query(
+    # Predicciones prÃ³ximos 7 dÃ­as (mejor por producto+fecha, luego sumar)
+    preds_raw = db.query(
+        models.FactPrediccion.producto_id,
+        models.FactPrediccion.fecha_proyectada,
+        models.FactPrediccion.demanda_estimada,
+        models.FactPrediccion.confianza_prediccion,
         models.DimProducto.nombre,
-        func.sum(models.FactPrediccion.demanda_estimada).label("total"),
     ).join(models.DimProducto).filter(
         models.FactPrediccion.fecha_proyectada > hoy,
         models.FactPrediccion.fecha_proyectada <= hoy + timedelta(days=7),
-    ).group_by(models.DimProducto.nombre).all()
+    ).all()
+    best_per_prod_fecha = {}
+    for pid, fecha, dem, conf, nombre in preds_raw:
+        key = (pid, fecha)
+        if key not in best_per_prod_fecha or (conf or 0) > (best_per_prod_fecha[key][0] or 0):
+            best_per_prod_fecha[key] = (conf, dem, nombre)
+    from collections import defaultdict
+    prod_totals = defaultdict(float)
+    for conf, dem, nombre in best_per_prod_fecha.values():
+        prod_totals[nombre] += dem
+    predicciones_prox = [
+        {"nombre": name, "total": total}
+        for name, total in prod_totals.items()
+    ]
 
-    # Órdenes pendientes
+    # Ã“rdenes pendientes
     ordenes_pendientes = db.query(models.OrdenCompra).filter(
         models.OrdenCompra.estado == "pendiente"
     ).count()
@@ -2144,10 +2498,12 @@ def dashboard_resumen(db: Session = Depends(get_db)):
         "mermas_hoy": float(mermas_hoy),
         "mermas_30d": float(mermas_30d),
         "pct_merma_30d": pct_merma_30d,
+        "mermas_7d_acum": float(mermas_7d_acum),
+        "mermas_totales": float(mermas_totales),
         "insumos_bajo_stock": insumos_criticos,
         "ordenes_pendientes": ordenes_pendientes,
         "prediccion_semana": [
-            {"producto": r.nombre, "demanda_total_7d": float(r.total)}
+            {"producto": r["nombre"], "demanda_total_7d": r["total"]}
             for r in predicciones_prox
         ],
     }
@@ -2155,21 +2511,22 @@ def dashboard_resumen(db: Session = Depends(get_db)):
 
 @app.get("/alertas/sobreproduccion")
 def alertas_sobreproduccion(dias: int = 7, umbral: float = 10.0, db: Session = Depends(get_db)):
-    """Detecta productos con sobreproducción recurrente (merma > umbral% en los últimos N días)."""
+    """Detecta productos con sobreproducciÃ³n recurrente (merma > umbral% en los Ãºltimos N dÃ­as)."""
     hoy = date.today()
     desde = hoy - timedelta(days=dias)
 
-    # Merma por motivo "Sobreproducción" por producto
+    # Merma por motivo "SobreproducciÃ³n" por producto
     merma_sobreprod = db.query(
         models.FactMerma.producto_id,
+        models.DimProducto.nombre.label("producto_nombre"),
         func.sum(models.FactMerma.cantidad_merma).label("total_merma"),
         func.count(models.FactMerma.id).label("frecuencia"),
-    ).filter(
+    ).join(models.DimProducto).filter(
         models.FactMerma.fecha >= desde,
-        models.FactMerma.motivo == "Sobreproducción",
-    ).group_by(models.FactMerma.producto_id).all()
+        models.FactMerma.motivo == "SobreproducciÃ³n",
+    ).group_by(models.FactMerma.producto_id, models.DimProducto.nombre).all()
 
-    # Ventas del mismo período por producto
+    # Ventas del mismo perÃ­odo por producto
     ventas_periodo = db.query(
         models.FactVenta.producto_id,
         func.sum(models.FactVenta.cantidad_vendida).label("total_ventas"),
@@ -2180,13 +2537,12 @@ def alertas_sobreproduccion(dias: int = 7, umbral: float = 10.0, db: Session = D
     for r in merma_sobreprod:
         ventas = ventas_dict.get(r.producto_id, 0) or 1
         total_merma = float(r.total_merma)
-        tasa = round(total_merma / (ventas + total_merma) * 100, 1)
+        tasa = calcular_tasa_merma(ventas, total_merma)
         if tasa >= umbral:
-            prod = db.query(models.DimProducto).filter(models.DimProducto.id == r.producto_id).first()
             reduccion = round(tasa - umbral, 1)
             alertas.append({
                 "producto_id": r.producto_id,
-                "producto_nombre": prod.nombre if prod else f"ID {r.producto_id}",
+                "producto_nombre": r.producto_nombre,
                 "tasa_sobreproduccion_pct": tasa,
                 "unidades_perdidas": total_merma,
                 "frecuencia": r.frecuencia,
@@ -2205,11 +2561,11 @@ def alertas_sobreproduccion(dias: int = 7, umbral: float = 10.0, db: Session = D
 
 @app.get("/dashboard/eficiencia")
 def eficiencia_produccion(dias: int = 30, db: Session = Depends(get_db)):
-    """Producción vs Ventas vs Merma por día y por producto, con ratio de eficiencia."""
+    """ProducciÃ³n vs Ventas vs Merma por dÃ­a y por producto, con ratio de eficiencia."""
     hoy = date.today()
     desde = hoy - timedelta(days=dias)
 
-    # Producción por día
+    # ProducciÃ³n por dÃ­a
     prod_diario = db.query(
         models.FactProduccion.fecha,
         func.sum(models.FactProduccion.cantidad_producida).label("total"),
@@ -2218,7 +2574,7 @@ def eficiencia_produccion(dias: int = 30, db: Session = Depends(get_db)):
     ).order_by(models.FactProduccion.fecha).all()
     prod_dict = {str(r.fecha): float(r.total) for r in prod_diario}
 
-    # Ventas por día
+    # Ventas por dÃ­a
     ventas_diario = db.query(
         models.FactVenta.fecha,
         func.sum(models.FactVenta.cantidad_vendida).label("total"),
@@ -2227,7 +2583,7 @@ def eficiencia_produccion(dias: int = 30, db: Session = Depends(get_db)):
     ).order_by(models.FactVenta.fecha).all()
     ventas_dict = {str(r.fecha): float(r.total) for r in ventas_diario}
 
-    # Mermas por día
+    # Mermas por dÃ­a
     mermas_diario = db.query(
         models.FactMerma.fecha,
         func.sum(models.FactMerma.cantidad_merma).label("total"),
@@ -2236,7 +2592,7 @@ def eficiencia_produccion(dias: int = 30, db: Session = Depends(get_db)):
     ).order_by(models.FactMerma.fecha).all()
     mermas_dict = {str(r.fecha): float(r.total) for r in mermas_diario}
 
-    # Ensamblar días
+    # Ensamblar dÃ­as
     todas_fechas = sorted(set(list(prod_dict.keys()) + list(ventas_dict.keys()) + list(mermas_dict.keys())))
     diario = []
     for f in todas_fechas:
@@ -2310,21 +2666,24 @@ def eficiencia_produccion(dias: int = 30, db: Session = Depends(get_db)):
     }
 
 
-# ── ML: Entrenar y Seed ───────────────────────────────────────────────────────
+# â”€â”€ ML: Entrenar y Seed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/ml/entrenar")
 def entrenar_modelos():
     """OE2: Lanza el entrenamiento del Random Forest para todos los productos."""
     try:
         from ml.trainer import entrenar_todos
+        from ml.predictor import invalidar_cache
         resultado = entrenar_todos()
+        invalidar_cache()
         return resultado
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en entrenamiento: {str(e)}")
 
+
 @app.post("/datos/semilla")
 def cargar_datos_semilla():
-    """Carga datos históricos sintéticos (365 días) para poder entrenar el modelo."""
+    """Carga datos histÃ³ricos sintÃ©ticos (365 dÃ­as) para poder entrenar el modelo."""
     try:
         from ml.seed_data import run_seed
         resultado = run_seed()
@@ -2334,7 +2693,7 @@ def cargar_datos_semilla():
 
 @app.post("/datos/completar")
 def completar_datos():
-    """Genera datos sintéticos para productos nuevos que tienen < 30 registros."""
+    """Genera datos sintÃ©ticos para productos nuevos que tienen < 30 registros."""
     try:
         from ml.seed_data import completar_datos_faltantes
         resultado = completar_datos_faltantes()
@@ -2342,7 +2701,7 @@ def completar_datos():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al completar datos: {str(e)}")
 
-# ── ML: Metricas reales de modelos ────────────────────────────────────────────
+# â”€â”€ ML: Metricas reales de modelos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/ml/metricas")
 def obtener_metricas_modelos():
@@ -2397,15 +2756,17 @@ def comparar_modelos():
     Retorna ranking detallado con el mejor modelo para cada producto."""
     try:
         from ml.comparador import entrenar_y_comparar_todos
+        from ml.predictor import invalidar_cache
         resultado = entrenar_y_comparar_todos()
+        invalidar_cache()
         return resultado
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error en comparación: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error en comparaciÃ³n: {str(e)}")
 
 
 @app.get("/ml/mejores-modelos")
 def obtener_mejores_modelos():
-    """Retorna el mapeo producto → mejor algoritmo desde best_model.json."""
+    """Retorna el mapeo producto â†’ mejor algoritmo desde best_model.json."""
     import json, os
     from ml.trainer import MODELS_DIR
     path = os.path.join(MODELS_DIR, "best_model.json")
@@ -2416,7 +2777,333 @@ def obtener_mejores_modelos():
     return {"mejores_modelos": mejores}
 
 
-# ── Clima: Sincronizacion con API externa ─────────────────────────────────────
+@app.get("/ml/comparar/stream")
+async def comparar_modelos_stream():
+    """OE6: Compara los 7 modelos en tiempo real via SSE."""
+    return StreamingResponse(
+        _stream_comparacion(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _stream_comparacion():
+    import joblib, os as _os
+    import numpy as np
+    from ml.comparador import cargar_datos_desde_db, MODELS_DIR, BEST_MODEL_PATH
+    from ml.features import build_features, get_X_y, FEATURE_COLS
+    from ml.models.registry import get_all_models
+
+    t_inicio = time.time()
+
+    # â”€â”€ FASE 1: Carga de datos â”€â”€
+    yield sse("fase", {"fase": "carga_datos", "mensaje": "Cargando datos historicos de PostgreSQL..."})
+    await asyncio.sleep(0)
+
+    try:
+        df_ventas, df_clima, df_productos = cargar_datos_desde_db()
+    except Exception as e:
+        yield sse("error", {"fase": "carga_datos", "error": str(e)})
+        return
+
+    if df_ventas.empty:
+        yield sse("error", {"fase": "carga_datos", "error": "No hay datos de ventas. Ejecuta primero el seed."})
+        return
+
+    yield sse("fase", {
+        "fase": "carga_datos_ok",
+        "ventas": int(len(df_ventas)),
+        "dias_clima": int(len(df_clima)),
+        "productos": int(len(df_productos)),
+    })
+    await asyncio.sleep(0)
+
+    # â”€â”€ FASE 2: Features â”€â”€
+    yield sse("fase", {"fase": "features", "mensaje": "Construyendo features (lags, rolling means, clima, feriados)..."})
+    await asyncio.sleep(0)
+
+    df_features = build_features(df_ventas, df_clima)
+
+    yield sse("fase", {
+        "fase": "features_ok",
+        "features": len(FEATURE_COLS),
+        "registros": int(len(df_features)),
+    })
+    await asyncio.sleep(0)
+
+    # â”€â”€ FASE 3: Comparacion por producto â”€â”€
+    modelos = get_all_models()
+    ranking = []
+    best_models = {}
+    recomendaciones_lista = []
+
+    total_productos = len(df_productos)
+    total_algoritmos = len(modelos)
+
+    yield sse("fase", {
+        "fase": "comparacion",
+        "productos": total_productos,
+        "algoritmos": total_algoritmos,
+    })
+    await asyncio.sleep(0)
+
+    for i_prod, (_, prod) in enumerate(df_productos.iterrows()):
+        pid = int(prod["id"])
+        nombre = prod["nombre"]
+
+        df_prod = df_features[df_features["producto_id"] == pid].copy()
+        if len(df_prod) < 30:
+            yield sse("producto_saltado", {
+                "producto_id": pid, "producto": nombre,
+                "razon": "datos insuficientes",
+                "registros": int(len(df_prod)),
+                "n_producto": i_prod + 1,
+                "total_productos": total_productos,
+            })
+            ranking.append({"producto_id": pid, "producto_nombre": nombre, "n_registros": len(df_prod), "mejor_modelo": None, "resultados": []})
+            continue
+
+        X, y = get_X_y(df_prod)
+        X_train, X_test = X[:-30], X[-30:]
+        y_train, y_test = y[:-30], y[-30:]
+
+        yield sse("producto_inicio", {
+            "producto_id": pid, "producto": nombre,
+            "n_producto": i_prod + 1, "total_productos": total_productos,
+            "registros": int(len(df_prod)),
+            "train": int(len(X_train)), "test": int(len(X_test)),
+            "features": len(FEATURE_COLS),
+        })
+        await asyncio.sleep(0)
+
+        # â”€â”€ Detalles de datos del producto â”€â”€
+        yield sse("datos_producto", {
+            "producto_id": pid, "producto": nombre,
+            "demanda_media": round(float(np.mean(y_train)), 1),
+            "demanda_std": round(float(np.std(y_train)), 1),
+            "demanda_min": round(float(np.min(y_train)), 1),
+            "demanda_max": round(float(np.max(y_train)), 1),
+            "features": FEATURE_COLS,
+            "descripcion_features": (
+                "Temporales: dia_semana, mes, dia_mes, dia_anio, es_finde. "
+                "Externas: es_feriado, tiene_evento, temperatura, condicion_encoded. "
+                "Historicas: ventas_lag_1 (ayer), ventas_lag_7 (hace 7 dias), "
+                "ventas_rolling_7 (prom 7d), ventas_rolling_30 (prom 30d)."
+            ),
+            "split": f"Train: {len(X_train)} muestras (primeros), Test: {len(X_test)} (ultimos 30 dias)",
+        })
+        await asyncio.sleep(0)
+
+        resultados = []
+        mejor_rmse = float("inf")
+        mejor_nombre = None
+        mejor_modelo_obj = None
+
+        for j_algo, (algo_nombre, ModeloClase) in enumerate(modelos):
+            t_algo = time.time()
+
+            yield sse("algoritmo_inicio", {
+                "producto_id": pid, "producto": nombre,
+                "algoritmo": algo_nombre,
+                "n_algoritmo": j_algo + 1,
+                "total_algoritmos": total_algoritmos,
+            })
+            await asyncio.sleep(0)
+
+            try:
+                yield sse("algoritmo_progreso", {
+                    "algoritmo": algo_nombre,
+                    "paso": "entrenando",
+                })
+                await asyncio.sleep(0)
+
+                modelo = ModeloClase()
+                modelo.train(X_train, y_train)
+
+                yield sse("algoritmo_progreso", {
+                    "algoritmo": algo_nombre,
+                    "paso": "evaluando",
+                })
+                await asyncio.sleep(0)
+
+                metricas = modelo.evaluate(X_test, y_test)
+                es_mejor = metricas["rmse"] < mejor_rmse
+                if es_mejor:
+                    mejor_rmse = metricas["rmse"]
+                    mejor_nombre = algo_nombre
+                    mejor_modelo_obj = modelo
+
+                yield sse("algoritmo_resultado", {
+                    "algoritmo": algo_nombre,
+                    "mae": metricas["mae"],
+                    "rmse": metricas["rmse"],
+                    "r2": metricas["r2"],
+                    "es_mejor": es_mejor,
+                    "tiempo": round(time.time() - t_algo, 2),
+                })
+                await asyncio.sleep(0)
+
+                # â”€â”€ Detalles del modelo (formula, parametros, feature importance) â”€â”€
+                try:
+                    detalles = modelo.get_detalles(FEATURE_COLS)
+                    yield sse("algoritmo_detalle", {
+                        "producto_id": pid, "producto": nombre,
+                        "algoritmo": algo_nombre,
+                        "formula": detalles.get("formula", ""),
+                        "como_funciona": detalles.get("como_funciona", []),
+                        "por_que_parametros": detalles.get("por_que_parametros", ""),
+                        "fortalezas": detalles.get("fortalezas", []),
+                        "debilidades": detalles.get("debilidades", []),
+                        "complejidad": detalles.get("complejidad", "media"),
+                        "velocidad": detalles.get("velocidad", "media"),
+                        "interpretabilidad": detalles.get("interpretabilidad", "media"),
+                        "parametros": detalles.get("parametros", {}),
+                        "feature_importance": detalles.get("feature_importance", []),
+                        "coeficientes": detalles.get("coeficientes", []),
+                    })
+                    await asyncio.sleep(0)
+                except Exception:
+                    pass
+
+                safe_name = algo_nombre.lower().replace(" ", "_").replace("(", "").replace(")", "").replace("+", "plus")
+                algo_path = _os.path.join(MODELS_DIR, f"model_{safe_name}_{pid}.pkl")
+                joblib.dump(modelo.model, algo_path)
+
+                resultados.append({
+                    "algoritmo": algo_nombre,
+                    "mae": metricas["mae"],
+                    "rmse": metricas["rmse"],
+                    "r2": metricas["r2"],
+                })
+
+            except Exception as e:
+                yield sse("algoritmo_error", {
+                    "algoritmo": algo_nombre,
+                    "error": str(e)[:200],
+                })
+                resultados.append({"algoritmo": algo_nombre, "error": str(e)[:200]})
+
+        # Guardar mejor modelo y meta con todos los modelos guardados
+        if mejor_modelo_obj and mejor_nombre:
+            model_path = _os.path.join(MODELS_DIR, f"best_{pid}.pkl")
+            meta_path = _os.path.join(MODELS_DIR, f"best_{pid}_meta.json")
+
+            modelos_guardados = {}
+            for r in resultados:
+                if "error" not in r:
+                    algo = r["algoritmo"]
+                    safe = algo.lower().replace(" ", "_").replace("(", "").replace(")", "").replace("+", "plus")
+                    modelos_guardados[safe] = algo
+
+            joblib.dump(mejor_modelo_obj.model, model_path)
+            with open(meta_path, "w") as f:
+                json.dump({
+                    "producto_id": pid, "producto_nombre": nombre,
+                    "mejor_algoritmo": mejor_nombre,
+                    "rmse": round(mejor_rmse, 2),
+                    "mae": round(next((r["mae"] for r in resultados if r.get("algoritmo") == mejor_nombre and "mae" in r), 0), 2),
+                    "r2": round(next((r["r2"] for r in resultados if r.get("algoritmo") == mejor_nombre and "r2" in r), 0), 4),
+                    "modelos_guardados": modelos_guardados,
+                    "todos_resultados": resultados,
+                }, f, indent=2, default=str)
+            best_models[str(pid)] = mejor_nombre
+
+        yield sse("producto_resumen", {
+            "producto_id": pid,
+            "producto": nombre,
+            "n_producto": i_prod + 1,
+            "total_productos": total_productos,
+            "mejor_algoritmo": mejor_nombre,
+            "mejor_rmse": round(mejor_rmse, 2) if mejor_rmse != float("inf") else None,
+            "resultados": resultados,
+        })
+
+        # â”€â”€ Recomendacion por producto â”€â”€
+        if mejor_nombre and len(resultados) >= 2:
+            validos = [r for r in resultados if "error" not in r]
+            validos_ord = sorted(validos, key=lambda r: r.get("rmse", float("inf")))
+            segundo = validos_ord[1] if len(validos_ord) >= 2 else None
+            mejor_r2 = next((r["r2"] for r in validos if r["algoritmo"] == mejor_nombre and "r2" in r), 0)
+            confianza = "alta" if mejor_r2 > 0.6 else ("media" if mejor_r2 > 0.3 else "baja")
+            recomendacion = ""
+            if segundo and mejor_nombre != segundo.get("algoritmo"):
+                dif = round(segundo.get("rmse", 0) - mejor_rmse, 2)
+                recomendacion = f"{mejor_nombre} supera a {segundo.get('algoritmo')} por {dif} de RMSE. "
+            if confianza == "baja":
+                recomendacion += f"R2={round(mejor_r2*100,0)}% es bajo. Considerar mas datos historicos o combinar modelos."
+            elif confianza == "media":
+                recomendacion += f"R2={round(mejor_r2*100,0)}% aceptable. El modelo captura patrones parciales."
+            else:
+                recomendacion += f"R2={round(mejor_r2*100,0)}% alto. El modelo es confiable para este producto."
+            yield sse("recomendacion_producto", {
+                "producto_id": pid, "producto": nombre,
+                "mejor_algoritmo": mejor_nombre,
+                "confianza": confianza,
+                "mejor_r2": round(mejor_r2, 4),
+                "segundo_mejor": segundo.get("algoritmo") if segundo else None,
+                "recomendacion": recomendacion,
+            })
+            recomendaciones_lista.append({
+                "producto": nombre, "confianza": confianza,
+                "mejor_algoritmo": mejor_nombre,
+                "r2": round(mejor_r2, 4),
+            })
+            await asyncio.sleep(0)
+
+        # Ranking global actualizado
+        counter = Counter(best_models.values())
+        yield sse("ranking_global", dict(counter.most_common()))
+        await asyncio.sleep(0)
+
+    # Guardar best_model.json
+    with open(BEST_MODEL_PATH, "w") as f:
+        json.dump(best_models, f, indent=2)
+
+    # Invalidar cache de modelos tras comparacion
+    try:
+        from ml.predictor import invalidar_cache
+        invalidar_cache()
+    except Exception:
+        pass
+
+    counter = Counter(best_models.values())
+    duracion = round(time.time() - t_inicio, 1)
+
+    # â”€â”€ Recomendaciones globales â”€â”€
+    productos_bajos = [r for r in recomendaciones_lista if r["confianza"] == "baja"]
+    productos_medios = [r for r in recomendaciones_lista if r["confianza"] == "media"]
+    productos_altos = [r for r in recomendaciones_lista if r["confianza"] == "alta"]
+    global_sugerencias = []
+    if productos_bajos:
+        nombres_bajos = ", ".join(r["producto"] for r in productos_bajos[:5])
+        global_sugerencias.append(f"Productos con baja confiabilidad (R2<0.3): {nombres_bajos}. Recomendacion: recolectar mas datos historicos o probar modelos hibridos.")
+    if productos_altos:
+        global_sugerencias.append(f"Productos con alta confiabilidad (R2>0.6): {len(productos_altos)} de {len(recomendaciones_lista)}. Estos modelos son aptos para produccion.")
+    if len(best_models) > 1 and len(set(best_models.values())) == 1:
+        global_sugerencias.append("Un solo algoritmo domina todos los productos. Considerar forzar diversidad con ensemble manual.")
+    else:
+        dominante = counter.most_common(1)[0][0] if counter else "N/A"
+        global_sugerencias.append(f"Algoritmo dominante: {dominante} ({counter[dominante]} productos). Se recomienda usar ensemble para productos con baja confianza individual.")
+
+    yield sse("completo", {
+        "total_productos": len(ranking) if ranking else total_productos,
+        "productos_con_modelo": len(best_models),
+        "duracion_total": duracion,
+        "resumen_algoritmos": dict(counter.most_common()),
+        "recomendaciones_globales": global_sugerencias,
+        "resumen_confianza": {
+            "altos": len(productos_altos),
+            "medios": len(productos_medios),
+            "bajos": len(productos_bajos),
+        },
+    })
+
+
+# â”€â”€ Clima: Sincronizacion con API externa â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/clima/sincronizar")
 async def sincronizar_clima_real(dias: int = 7):
@@ -2460,7 +3147,7 @@ async def sincronizar_clima_real(dias: int = 7):
         db.close()
 
 
-# ── Estado general del sistema ────────────────────────────────────────────────
+# â”€â”€ Estado general del sistema â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/sistema/estado")
 def estado_sistema():
@@ -2528,7 +3215,7 @@ def estado_sistema():
                 "docs":      "http://localhost:8000/docs",
                 "pgadmin":   "http://localhost:8080",
                 "n8n":       "http://localhost:5678",
-                "streamlit": "http://localhost:8501",
+                "frontend":  "http://localhost:5173",
                 "clima_api": "Open-Meteo (sin API key)",
             },
         }
@@ -2537,172 +3224,9 @@ def estado_sistema():
     finally:
         db.close()
 
-if False:
-    @app.delete("/mermas/{merma_id}")
-    def eliminar_merma(merma_id: int, db: Session = Depends(get_db)):
-        """Elimina un registro de merma."""
-        merma = db.query(models.FactMerma).filter(models.FactMerma.id == merma_id).first()
-        if not merma:
-            raise HTTPException(status_code=404, detail="Merma no encontrada")
-        db.delete(merma)
-        db.commit()
-        return {"mensaje": f"Merma {merma_id} eliminada"}
 
 
-# ── Chatbot IA ─────────────────────────────────────────────────────────────────
-
-class ChatbotPregunta(BaseModel):
-    pregunta: str
-
-def _obtener_datos_sistema(db: Session):
-    """Reúne los datos actuales del sistema para contexto del chatbot."""
-    hoy = date.today()
-    desde_7 = hoy - timedelta(days=7)
-    desde_30 = hoy - timedelta(days=30)
-
-    ventas_7d = db.query(func.sum(models.FactVenta.cantidad_vendida)).filter(
-        models.FactVenta.fecha >= desde_7
-    ).scalar() or 0
-
-    ventas_30d = db.query(func.sum(models.FactVenta.cantidad_vendida)).filter(
-        models.FactVenta.fecha >= desde_30
-    ).scalar() or 0
-
-    mermas_30d = db.query(func.sum(models.FactMerma.cantidad_merma)).filter(
-        models.FactMerma.fecha >= desde_30
-    ).scalar() or 0
-
-    pct_merma = round((mermas_30d / (ventas_30d + mermas_30d)) * 100, 2) if (ventas_30d + mermas_30d) > 0 else 0
-
-    productos = db.query(models.DimProducto).all()
-    n_productos = len(productos)
-
-    insumos_bajos = db.query(models.InsumoCritico).filter(
-        models.InsumoCritico.stock_actual < models.InsumoCritico.stock_minimo
-    ).all()
-
-    alertas = [{"nombre": i.nombre, "stock": i.stock_actual, "minimo": i.stock_minimo, "unidad": i.unidad_medida} for i in insumos_bajos]
-
-    productos_top = db.query(
-        models.DimProducto.nombre,
-        func.sum(models.FactVenta.cantidad_vendida).label("total")
-    ).join(models.FactVenta).filter(
-        models.FactVenta.fecha >= desde_7
-    ).group_by(models.DimProducto.nombre).order_by(func.sum(models.FactVenta.cantidad_vendida).desc()).limit(5).all()
-
-    ordenes_pendientes = db.query(models.OrdenCompra).filter(
-        models.OrdenCompra.estado == "pendiente"
-    ).count()
-
-    return {
-        "ventas_7d": float(ventas_7d),
-        "ventas_30d": float(ventas_30d),
-        "mermas_30d": float(mermas_30d),
-        "pct_merma": pct_merma,
-        "n_productos": n_productos,
-        "alertas_stock": alertas,
-        "productos_top": [{"nombre": p.nombre, "ventas": float(p.total)} for p in productos_top],
-        "ordenes_pendientes": ordenes_pendientes,
-    }
-
-def _generar_respuesta(pregunta: str, datos: dict) -> str:
-    """Genera respuesta basada en palabras clave y datos reales."""
-    pregunta_lower = pregunta.lower()
-    resp = []
-
-    if any(p in pregunta_lower for p in ["hola", "buenos", "buenas", "saludo", "que tal"]):
-        return "¡Hola! Soy el asistente de Panadería Victoria. Puedo ayudarte con información sobre ventas, inventario, mermas, predicciones, productos y más. ¿Qué necesitas saber?"
-
-    if any(p in pregunta_lower for p in ["venta", "vender", "vendido", "vendi"]):
-        resp.append(f"📊 **Resumen de Ventas:**")
-        resp.append(f"  • Últimos 7 días: **{datos['ventas_7d']} unidades**")
-        resp.append(f"  • Últimos 30 días: **{datos['ventas_30d']} unidades**")
-        if datos['productos_top']:
-            resp.append(f"\n🏆 **Productos más vendidos (últimos 7 días):**")
-            for i, p in enumerate(datos['productos_top'][:3], 1):
-                resp.append(f"  {i}. {p['nombre']}: {p['ventas']} unidades")
-        return "\n".join(resp)
-
-    if any(p in pregunta_lower for p in ["stock", "inventario", "insumo", "material", "existencia"]):
-        resp.append(f"📦 **Estado del Inventario:**")
-        if datos['alertas_stock']:
-            resp.append("\n⚠️ **Alertas de stock bajo:**")
-            for a in datos['alertas_stock']:
-                resp.append(f"  • {a['nombre']}: {a['stock']}/{a['minimo']} {a['unidad']}")
-        else:
-            resp.append("  ✅ No hay alertas de stock bajo.")
-        return "\n".join(resp)
-
-    if any(p in pregunta_lower for p in ["merma", "perder", "perdida", "desperdicio", "sobra"]):
-        resp.append(f"📉 **Análisis de Mermas:**")
-        resp.append(f"  • Últimos 30 días: **{datos['mermas_30d']} unidades perdidas**")
-        resp.append(f"  • Porcentaje de merma: **{datos['pct_merma']}%**")
-        if datos['pct_merma'] > 5:
-            resp.append("\n⚠️ Recomendación: El porcentaje de merma está alto. Considera reducir producción o mejorar la planificación.")
-        else:
-            resp.append("\n✅ Las mermas están dentro de un rango saludable (menos del 5%).")
-        return "\n".join(resp)
-
-    if any(p in pregunta_lower for p in ["producto", "catalogo", "menu", "articulo"]):
-        resp.append(f"🍞 **Catálogo de Productos:**")
-        resp.append(f"  • Total de productos: **{datos['n_productos']}**")
-        if datos['productos_top']:
-            resp.append(f"\n🔥 **Top productos en ventas:**")
-            for p in datos['productos_top'][:3]:
-                resp.append(f"  • {p['nombre']}: {p['ventas']} unidades")
-        return "\n".join(resp)
-
-    if any(p in pregunta_lower for p in ["orden", "compra", "pedido", "proveedor"]):
-        resp.append(f"🛒 **Órdenes de Compra:**")
-        resp.append(f"  • Pendientes: **{datos['ordenes_pendientes']}**")
-        if datos['ordenes_pendientes'] > 0:
-            resp.append("\n💡 Ve a 'Órdenes de Compra' para ver los detalles.")
-        return "\n".join(resp)
-
-    if any(p in pregunta_lower for p in ["predic", "pronostic", "previs", "futuro", "siguiente"]):
-        resp.append("🔮 **Sistema de Predicciones:**")
-        resp.append("El sistema usa Machine Learning (Random Forest) para predecir la demanda basándose en:")
-        resp.append("  • Datos históricos de ventas")
-        resp.append("  • Clima y condiciones meteorológicas")
-        resp.append("  • Día de la semana y eventos especiales")
-        resp.append("\n💡 Ve a la página 'Predicciones' para ver los próximos 7 días.")
-        return "\n".join(resp)
-
-    if any(p in pregunta_lower for p in ["ayuda", "como", "qué puedo", "que puedo", "instruc"]):
-        return """📖 **Puedo ayudarte con:**
-
-• **Ventas**: "Cómo van las ventas?", "ventas de esta semana"
-• **Inventario**: "Qué insumos hay?", "stock de harina"
-• **Mermas**: "Cuántas mermas hay?", "porcentaje de merma"
-• **Productos**: "Qué productos tengo?", "top ventas"
-• **Órdenes**: "Tengo órdenes pendientes?"
-• **Predicciones**: "Qué se predice para mañana?"
-• **General**: "Dame un resumen del sistema"
-
-¿En qué puedo ayudarte?"""
-
-    return f"""🤖 Gracias por tu pregunta: "{pregunta}"
-
-Tengo estos datos del sistema:
-• Ventas 7 días: {datos['ventas_7d']} unidades
-• Ventas 30 días: {datos['ventas_30d']} unidades  
-• Mermas 30 días: {datos['mermas_30d']} unidades ({datos['pct_merma']}%)
-• Productos: {datos['n_productos']}
-• Alertas de stock: {len(datos['alertas_stock'])}
-• Órdenes pendientes: {datos['ordenes_pendientes']}
-
-¿Puedes ser más específico? Puedo ayudarte con ventas, inventario, mermas, productos, predicciones y más."""
-
-
-@app.post("/chatbot/pregunta")
-def chatbot_pregunta(pregunta: ChatbotPregunta, db: Session = Depends(get_db)):
-    """Endpoint para el chatbot: recibe pregunta y retorna respuesta basada en datos."""
-    datos = _obtener_datos_sistema(db)
-    respuesta = _generar_respuesta(pregunta.pregunta, datos)
-    return {"respuesta": datos, "mensaje": respuesta}
-
-
-# ── Reportes Financieros ────────────────────────────────────────────────────────
+# â”€â”€ Reportes Financieros â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ReporteRequest(BaseModel):
     fecha_inicio: Optional[date] = None
@@ -2765,7 +3289,7 @@ def estado_resultados(reporte: ReporteRequest, db: Session = Depends(get_db)):
 
 @app.get("/reportes/ventas-diarias")
 def ventas_diarias(fecha_inicio: str = None, fecha_fin: str = None, db: Session = Depends(get_db)):
-    """Retorna ventas diarias para gráficos."""
+    """Retorna ventas diarias para grÃ¡ficos."""
     desde = date.fromisoformat(fecha_inicio) if fecha_inicio else (date.today() - timedelta(days=30))
     hasta = date.fromisoformat(fecha_fin) if fecha_fin else date.today()
     
@@ -2843,3 +3367,437 @@ def productos_porcentaje(fecha_inicio: str = None, fecha_fin: str = None, db: Se
     
     resultado.sort(key=lambda x: x['unidades'], reverse=True)
     return resultado
+
+
+# â”€â”€ Dashboard KPIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+@app.get("/dashboard/kpis")
+def dashboard_kpis(db: Session = Depends(get_db)):
+    from datetime import date, timedelta
+    hoy = date.today()
+    ayer = hoy - timedelta(days=1)
+
+    ventas_q = db.query(func.sum(models.FactVenta.cantidad_vendida * models.DimProducto.precio)).join(
+        models.DimProducto, models.FactVenta.producto_id == models.DimProducto.id
+    ).filter(models.FactVenta.fecha == hoy).scalar() or 0
+
+    costo_q = db.query(func.sum(models.FactVenta.cantidad_vendida * models.DimProducto.costo)).join(
+        models.DimProducto, models.FactVenta.producto_id == models.DimProducto.id
+    ).filter(models.FactVenta.fecha == hoy).scalar() or 0
+
+    prod_hoy_q = db.query(func.sum(models.FactProduccion.cantidad_producida)).filter(models.FactProduccion.fecha == hoy).scalar() or 0
+    ventas_uds_q = db.query(func.sum(models.FactVenta.cantidad_vendida)).filter(models.FactVenta.fecha == hoy).scalar() or 0
+    eficiencia = round((ventas_uds_q / prod_hoy_q * 100) if prod_hoy_q > 0 else 0, 1)
+
+    prod_hoy_total = db.query(func.sum(models.FactProduccion.cantidad_producida)).filter(models.FactProduccion.fecha == hoy).scalar() or 0
+    vend_hoy_total = db.query(func.sum(models.FactVenta.cantidad_vendida)).filter(models.FactVenta.fecha == hoy).scalar() or 0
+    pp_hoy_total = db.query(func.sum(models.PanPasado.cantidad)).filter(models.PanPasado.fecha_origen == hoy).scalar() or 0
+    merma_hoy = max(0, prod_hoy_total - vend_hoy_total - pp_hoy_total)
+
+    from collections import defaultdict
+    ventas_7d = db.query(models.FactVenta.producto_id, func.sum(models.FactVenta.cantidad_vendida)).filter(
+        models.FactVenta.fecha >= hoy - timedelta(days=7)
+    ).group_by(models.FactVenta.producto_id).all()
+    prod_ventas_dict = {v.producto_id: float(v[1]) for v in ventas_7d}
+
+    top3 = db.query(models.DimProducto.nombre, (models.DimProducto.precio - models.DimProducto.costo).label("margen")).order_by(
+        (models.DimProducto.precio - models.DimProducto.costo).desc()
+    ).limit(3).all()
+
+    # â”€â”€ Ayer (para tendencias) â”€â”€
+    ventas_q_ayer = db.query(func.sum(models.FactVenta.cantidad_vendida * models.DimProducto.precio)).join(
+        models.DimProducto, models.FactVenta.producto_id == models.DimProducto.id
+    ).filter(models.FactVenta.fecha == ayer).scalar() or 0
+    prod_ayer_q = db.query(func.sum(models.FactProduccion.cantidad_producida)).filter(models.FactProduccion.fecha == ayer).scalar() or 0
+    ventas_uds_ayer = db.query(func.sum(models.FactVenta.cantidad_vendida)).filter(models.FactVenta.fecha == ayer).scalar() or 0
+    merma_ayer = db.query(func.sum(models.FactMerma.cantidad_merma)).filter(models.FactMerma.fecha == ayer).scalar() or 0
+
+    def variacion(hoy_val, ayer_val):
+        if ayer_val and ayer_val > 0:
+            return round((hoy_val - ayer_val) / ayer_val * 100, 1)
+        return 0
+
+    # â”€â”€ Sparklines (7 dias) â”€â”€
+    spark_desde = hoy - timedelta(days=7)
+    spark_ventas = db.query(models.FactVenta.fecha, func.sum(models.FactVenta.cantidad_vendida)).filter(
+        models.FactVenta.fecha >= spark_desde, models.FactVenta.fecha < hoy
+    ).group_by(models.FactVenta.fecha).order_by(models.FactVenta.fecha).all()
+    spark_mermas = db.query(models.FactMerma.fecha, func.sum(models.FactMerma.cantidad_merma)).filter(
+        models.FactMerma.fecha >= spark_desde, models.FactMerma.fecha < hoy
+    ).group_by(models.FactMerma.fecha).order_by(models.FactMerma.fecha).all()
+    spark_prod = db.query(models.FactProduccion.fecha, func.sum(models.FactProduccion.cantidad_producida)).filter(
+        models.FactProduccion.fecha >= spark_desde, models.FactProduccion.fecha < hoy
+    ).group_by(models.FactProduccion.fecha).order_by(models.FactProduccion.fecha).all()
+
+    def to_spark(rows):
+        vals = [float(r[1]) for r in rows]
+        if len(vals) < 2:
+            vals = [0] * 7
+        return [round(v, 1) for v in vals]
+
+    return {
+        "fecha": str(hoy),
+        "margen_bruto_estimado": round(float(ventas_q) - float(costo_q), 2),
+        "ingresos_hoy": round(float(ventas_q), 2),
+        "costo_estimado": round(float(costo_q), 2),
+        "eficiencia_produccion_pct": eficiencia,
+        "merma_hoy": float(merma_hoy),
+        "ventas_unidades_hoy": float(ventas_uds_q),
+        "produccion_unidades_hoy": float(prod_hoy_q),
+        "top3_rentables": [{"producto": t[0], "margen_unitario": round(float(t[1]), 2)} for t in top3],
+        "tendencias": {
+            "ingresos": variacion(float(ventas_q), float(ventas_q_ayer)),
+            "eficiencia": round(eficiencia - round((ventas_uds_ayer / prod_ayer_q * 100) if prod_ayer_q > 0 else 0, 1), 1),
+            "merma": variacion(float(merma_hoy), float(merma_ayer)),
+            "ventas_uds": variacion(float(ventas_uds_q), float(ventas_uds_ayer)),
+            "produccion": variacion(float(prod_hoy_q), float(prod_ayer_q)),
+        },
+        "sparklines": {
+            "ventas": to_spark(spark_ventas),
+            "mermas": to_spark(spark_mermas),
+            "produccion": to_spark(spark_prod),
+        },
+    }
+
+
+
+
+
+@app.get("/dashboard/condiciones-venta")
+def condiciones_venta(db: Session = Depends(get_db)):
+    """Analiza clima, calendario y hora para sugerir ajustes de produccion."""
+    now = datetime.now()
+    hoy = date.today()
+    dia_semana = now.weekday()
+    hora = now.hour
+    NOMBRES_DIAS = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
+    clima = db.query(models.DimClima).filter(models.DimClima.fecha == hoy).first()
+    condicion = clima.condicion if clima else "Desconocido"
+    temperatura = clima.temperatura_promedio if clima else None
+    es_finde = dia_semana >= 5
+    es_feriado = clima.es_feriado if clima else False
+    es_hora_pico = hora in [7, 8, 9, 12, 13, 18, 19]
+    es_noche = hora >= 20 or hora <= 5
+    ajuste = 1.0
+    razones = []
+    if es_finde:
+        ajuste *= 1.35
+        razones.append("Finde semana (+35% demanda)")
+    if es_feriado:
+        ajuste *= 1.50
+        razones.append("Feriado (+50% demanda)")
+    if es_hora_pico:
+        ajuste *= 1.20
+        razones.append("Hora pico (+20% demanda)")
+    if es_noche:
+        ajuste *= 0.7
+        razones.append("Horario nocturno (-30% demanda)")
+    if condicion and "Lluvia" in condicion:
+        ajuste *= 0.75
+        razones.append("Lluvia (-25% demanda)")
+    if temperatura and temperatura > 28:
+        ajuste *= 1.10
+        razones.append("Calor intenso (+10% demanda)")
+    return {
+        "fecha": str(hoy),
+        "dia_semana": NOMBRES_DIAS[dia_semana],
+        "hora": hora,
+        "clima": condicion,
+        "temperatura": temperatura,
+        "es_finde": es_finde,
+        "es_feriado": es_feriado,
+        "es_hora_pico": es_hora_pico,
+        "ajuste_sugerido": round(ajuste, 2),
+        "recomendacion": " | ".join(razones) if razones else "Condiciones normales",
+        "sugerir_mas_produccion": ajuste > 1.15,
+    }
+
+
+@app.get("/dashboard/podios")
+def dashboard_podios(dias: int = 30, db: Session = Depends(get_db)):
+    """Rankings: productos mas vendidos, vendedores top, insumos, margenes, dias, pagos, proveedores."""
+    hoy = date.today()
+    desde_30 = hoy - timedelta(days=dias)
+
+    prod_vendidos = db.query(
+        models.DimProducto.nombre,
+        func.coalesce(func.sum(models.FactVenta.cantidad_vendida), 0).label("total")
+    ).join(
+        models.DimProducto, models.FactVenta.producto_id == models.DimProducto.id
+    ).filter(
+        models.FactVenta.fecha >= desde_30
+    ).group_by(models.DimProducto.nombre).order_by(func.sum(models.FactVenta.cantidad_vendida).desc()).limit(20).all()
+
+    vendedores_top = db.query(
+        models.DimVendedor.nombre,
+        models.DimVendedor.apellido,
+        func.coalesce(func.sum(models.FactVenta.cantidad_vendida * func.coalesce(models.FactVenta.precio_unitario, models.DimProducto.precio)), 0).label("total"),
+        func.count(models.FactVenta.id).label("transacciones"),
+    ).join(
+        models.FactVenta, models.FactVenta.vendedor_id == models.DimVendedor.id
+    ).join(
+        models.DimProducto, models.FactVenta.producto_id == models.DimProducto.id
+    ).filter(
+        models.FactVenta.fecha >= desde_30,
+        models.FactVenta.vendedor_id.isnot(None),
+    ).group_by(models.DimVendedor.id).order_by(func.sum(models.FactVenta.cantidad_vendida * func.coalesce(models.FactVenta.precio_unitario, models.DimProducto.precio)).desc()).limit(20).all()
+
+    insumos_usados = db.query(
+        models.InsumoCritico.nombre,
+        models.InsumoCritico.unidad_medida,
+        func.coalesce(func.sum(models.FichaTecnica.cantidad_necesaria * models.FactProduccion.cantidad_producida), 0).label("total")
+    ).join(
+        models.FichaTecnica, models.FichaTecnica.insumo_id == models.InsumoCritico.id
+    ).join(
+        models.FactProduccion, models.FactProduccion.producto_id == models.FichaTecnica.producto_id
+    ).filter(
+        models.FactProduccion.fecha >= desde_30
+    ).group_by(models.InsumoCritico.id).order_by(func.sum(models.FichaTecnica.cantidad_necesaria * models.FactProduccion.cantidad_producida).desc()).limit(20).all()
+
+    mayor_margen = db.query(
+        models.DimProducto.nombre,
+        models.DimProducto.precio,
+        models.DimProducto.costo,
+        (models.DimProducto.precio - models.DimProducto.costo).label("margen"),
+    ).order_by((models.DimProducto.precio - models.DimProducto.costo).desc()).limit(20).all()
+
+    dias_semana = db.query(
+        func.extract("dow", models.FactVenta.fecha).label("dia"),
+        func.avg(models.FactVenta.cantidad_vendida).label("promedio"),
+    ).filter(
+        models.FactVenta.fecha >= desde_30
+    ).group_by(func.extract("dow", models.FactVenta.fecha)).order_by(func.avg(models.FactVenta.cantidad_vendida).desc()).all()
+    NOMBRES_DIAS = ["Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"]
+
+    metodos_pago = db.query(
+        models.FactVenta.metodo_pago,
+        func.count(models.FactVenta.id).label("total"),
+    ).filter(
+        models.FactVenta.fecha >= desde_30
+    ).group_by(models.FactVenta.metodo_pago).order_by(func.count(models.FactVenta.id).desc()).all()
+
+    proveedores_top = db.query(
+        models.Proveedor.nombre,
+        func.count(models.OrdenCompra.id).label("total_ordenes"),
+    ).join(
+        models.OrdenCompra, models.OrdenCompra.proveedor_id == models.Proveedor.id
+    ).filter(
+        models.OrdenCompra.fecha_orden >= desde_30
+    ).group_by(models.Proveedor.id).order_by(func.count(models.OrdenCompra.id).desc()).limit(20).all()
+
+    return {
+        "productos_mas_vendidos": [
+            {"posicion": i+1, "nombre": r[0], "total_uds": float(r[1])}
+            for i, r in enumerate(prod_vendidos)
+        ],
+        "vendedores_top": [
+            {"posicion": i+1, "nombre": f"{r[0]} {r[1] or chr(39)}".strip(), "total_ventas": round(float(r[2]), 2), "transacciones": int(r[3])}
+            for i, r in enumerate(vendedores_top)
+        ],
+        "insumos_mas_usados": [
+            {"posicion": i+1, "nombre": r[0], "unidad": r[1], "total_consumo": round(float(r[2]), 2)}
+            for i, r in enumerate(insumos_usados)
+        ],
+        "productos_mayor_margen": [
+            {"posicion": i+1, "nombre": r[0], "precio": float(r[1]), "costo": float(r[2]), "margen": round(float(r[3]), 2)}
+            for i, r in enumerate(mayor_margen)
+        ],
+        "dias_pico": [
+            {"dia": NOMBRES_DIAS[int(r[0])], "promedio_ventas": round(float(r[1]), 1)}
+            for r in dias_semana
+        ],
+        "metodos_pago": [
+            {"metodo": r[0] or "efectivo", "total_transacciones": int(r[1])}
+            for r in metodos_pago
+        ],
+        "proveedores_mas_usados": [
+            {"posicion": i+1, "nombre": r[0], "total_ordenes": int(r[1])}
+            for i, r in enumerate(proveedores_top)
+        ],
+    }
+
+# â”€â”€ Inventario Optimization â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+@app.get("/inventario/optimizar")
+def optimizar_inventario(db: Session = Depends(get_db)):
+    from utils.inventario import optimizar_inventario as _opt
+    hoy = date.today()
+    desde = hoy - timedelta(days=30)
+
+    insumos = db.query(models.InsumoCritico).all()
+    if not insumos:
+        return {"optimizados": []}
+
+    resultados = []
+    for ins in insumos:
+        fichas = db.query(models.FichaTecnica).filter(models.FichaTecnica.insumo_id == ins.id).all()
+        demanda_diaria = 0
+        for f in fichas:
+            ventas_sum = db.query(func.sum(models.FactVenta.cantidad_vendida)).filter(
+                models.FactVenta.producto_id == f.producto_id,
+                models.FactVenta.fecha >= desde,
+            ).scalar() or 0
+            demanda_diaria += (ventas_sum / 30) * f.cantidad_necesaria
+
+        demanda_diaria = round(demanda_diaria, 2)
+        opt = _opt(ins, [demanda_diaria] * 30)
+        resultados.append({
+            "insumo_id": ins.id,
+            "insumo_nombre": ins.nombre,
+            "stock_actual": ins.stock_actual,
+            "stock_minimo_actual": ins.stock_minimo,
+            "stock_minimo_optimo": opt["stock_minimo_optimo"],
+            "punto_reorden": opt["punto_reorden"],
+            "eoq": opt["eoq"],
+            "cantidad_sugerida": opt["cantidad_sugerida"],
+            "costo_total_proyectado": opt["costo_total_proyectado"],
+            "demanda_diaria_estimada": demanda_diaria,
+        })
+
+    return {"optimizados": resultados}
+
+
+# â”€â”€ Anomaly Detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+
+
+@app.post("/enviar-informe")
+def enviar_informe(data: dict, db: Session = Depends(get_db)):
+    """Envia un correo con un reporte adjunto."""
+    from utils.email_utils import enviar_email_pdf
+    destinatario = data.get("destinatario", "")
+    asunto = data.get("asunto", "Reporte del Sistema")
+    mensaje = data.get("mensaje", "")
+    if not destinatario:
+        raise HTTPException(status_code=400, detail="Destinatario requerido")
+    from utils.pdf_orden import generar_pdf_orden
+    pdf_bytes = generar_pdf_orden({"proveedor_nombre": "Sistema", "insumo_nombre": "Reporte", "cantidad": 0, "precio_unitario": 0})
+    ok = enviar_email_pdf(destinatario, asunto, mensaje, pdf_bytes, data.get("nombre_archivo", "reporte.pdf"))
+    if ok:
+        return {"mensaje": "Correo enviado correctamente"}
+    raise HTTPException(status_code=500, detail="Error al enviar correo")
+
+
+@app.post("/enviar-reporte")
+def enviar_reporte(data: dict):
+    """Genera un PDF con tabla de datos y lo envia por correo."""
+    from utils.email_utils import enviar_email_pdf
+    from utils.pdf_reporte import generar_pdf_reporte
+    destinatario = data.get("destinatario", "")
+    titulo = data.get("titulo", "Reporte")
+    asunto = data.get("asunto", f"Reporte: {titulo}")
+    mensaje = data.get("mensaje", "Adjunto el reporte solicitado.")
+    columnas = data.get("columnas", [])
+    filas = data.get("filas", [])
+    if not destinatario:
+        raise HTTPException(status_code=400, detail="Destinatario requerido")
+    pdf_bytes = generar_pdf_reporte(titulo, columnas, filas)
+    ok = enviar_email_pdf(destinatario, asunto, mensaje, pdf_bytes, f"{titulo}.pdf")
+    if ok:
+        return {"mensaje": "Reporte enviado correctamente"}
+    raise HTTPException(status_code=500, detail="Error al enviar reporte")
+
+
+@app.get("/ventas/anomalias")
+async def detectar_anomalias_ventas(dias: int = 30, db: Session = Depends(get_db)):
+    from ml.anomaly import detectar_anomalias as _detectar
+    try:
+        resultado = await _detectar(dias=dias)
+        return resultado
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error detectando anomalias: {str(e)}")
+
+
+# â”€â”€ ML Hyperparameter Optimization â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+@app.post("/ml/optimizar")
+async def optimizar_hiperparametros():
+    import numpy as np
+    from ml.comparador import cargar_datos_desde_db
+    from ml.features import build_features, get_X_y, FEATURE_COLS
+    from ml.models.registry import get_all_models
+    from sklearn.model_selection import GridSearchCV
+    from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+    from sklearn.linear_model import LinearRegression
+    from sklearn.neural_network import MLPRegressor
+
+    try:
+        df_ventas, df_clima, df_productos = cargar_datos_desde_db()
+        if df_ventas.empty:
+            return {"error": "No hay datos de ventas"}
+
+        df_features = build_features(df_ventas, df_clima)
+        resultados = []
+
+        for _, prod in df_productos.iterrows():
+            pid = int(prod["id"])
+            nombre = prod["nombre"]
+            df_prod = df_features[df_features["producto_id"] == pid].copy()
+            if len(df_prod) < 30:
+                continue
+            X, y = get_X_y(df_prod)
+
+            producto_result = {"producto_id": pid, "producto_nombre": nombre, "mejores_params": {}}
+
+            try:
+                rf = GridSearchCV(RandomForestRegressor(random_state=42, n_jobs=-1), {
+                    "n_estimators": [100, 200],
+                    "max_depth": [5, 8, 12],
+                    "min_samples_leaf": [1, 3, 5],
+                }, cv=3, scoring="neg_mean_squared_error")
+                rf.fit(X, y)
+                producto_result["mejores_params"]["Random Forest"] = rf.best_params_
+            except Exception: pass
+
+            try:
+                gb = GridSearchCV(GradientBoostingRegressor(random_state=42), {
+                    "n_estimators": [100, 150],
+                    "max_depth": [3, 5],
+                    "learning_rate": [0.05, 0.08, 0.1],
+                }, cv=3, scoring="neg_mean_squared_error")
+                gb.fit(X, y)
+                producto_result["mejores_params"]["Gradient Boosting"] = gb.best_params_
+            except Exception: pass
+
+            try:
+                mlp = GridSearchCV(MLPRegressor(random_state=42, max_iter=300, early_stopping=True), {
+                    "hidden_layer_sizes": [(32,), (64, 32), (128, 64)],
+                    "activation": ["relu"],
+                }, cv=3, scoring="neg_mean_squared_error")
+                mlp.fit(X, y)
+                producto_result["mejores_params"]["MLP Neural Network"] = mlp.best_params_
+            except Exception: pass
+
+            if producto_result["mejores_params"]:
+                resultados.append(producto_result)
+
+        return {
+            "status": "ok",
+            "total_productos_optimizados": len(resultados),
+            "resultados": resultados,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en optimizacion: {str(e)}")
+
+
+# â”€â”€ Notification Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+@app.get("/notificaciones/config")
+def obtener_config_notificaciones(db: Session = Depends(get_db)):
+    return {
+        "telegram_token": os.environ.get("TELEGRAM_BOT_TOKEN", "")[:10] + "..." if os.environ.get("TELEGRAM_BOT_TOKEN") else "",
+        "telegram_habilitado": bool(os.environ.get("TELEGRAM_BOT_TOKEN")),
+        "gmail_habilitado": bool(os.environ.get("GMAIL_USER")),
+        "eventos": ["anomalia_venta", "stock_bajo", "merma_alta", "predicciones_listas"],
+    }
+
+
+@app.post("/notificaciones/test")
+async def probar_notificacion(evento: str = "predicciones_listas"):
+    from utils.notificaciones import notificar_evento
+    try:
+        await notificar_evento(evento, {"test": True, "mensaje": "Prueba de notificacion desde Panaderia Victoria"})
+        return {"status": "ok", "evento": evento, "mensaje": "Notificacion enviada"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+

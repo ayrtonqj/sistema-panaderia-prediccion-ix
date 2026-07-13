@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { api } from '../api/api'
 import { Bar } from 'react-chartjs-2'
 import { Chart, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js'
-import { openPrintWindow, tableHeaderHtml } from '../utils/pdf'
+import { openPrintWindow, tableHeaderHtml, descargarExcel, enviarPorCorreo } from '../utils/pdf'
 import { formatDateChart, formatDateShort } from '../utils/formatters'
 
 Chart.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
@@ -117,7 +117,11 @@ export default function ControlPerdidasPage() {
               <option value={60}>60 días</option>
             </select>
           )}
-          <button className="btn btn-danger" onClick={generarPDF}>📄 PDF</button>
+          <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+        <button className="btn btn-danger" onClick={generarPDF} style={{ fontSize: '11px', padding: '3px 8px', flexShrink: 0 }}>📄 PDF</button>
+        <button className="btn" onClick={() => enviarPorCorreo('Control de Pérdidas', ['Producto', 'Producido', 'Vendido', 'Merma', 'Eficiencia'], (porProducto || []).map(p => [p.producto_nombre, p.total_producido, p.total_vendido, p.total_merma, p.eficiencia_pct + '%']))} style={{ fontSize: '11px', padding: '3px 8px', background: '#e74c3c', color: '#fff', flexShrink: 0 }}>📧 Enviar</button>
+        <button className="btn" onClick={() => descargarExcel('ControlPerdidas', [{ key: "producto_nombre", label: "Producto" }, { key: "total_producido", label: "Producido" }, { key: "total_vendido", label: "Vendido" }, { key: "total_merma", label: "Merma" }, { key: "eficiencia_pct", label: "Eficiencia %" }], porProducto)} style={{ fontSize: '11px', padding: '3px 8px', background: '#27ae60', color: '#fff', flexShrink: 0 }}>📊 Excel</button>
+        </div>
         </div>
       </div>
 

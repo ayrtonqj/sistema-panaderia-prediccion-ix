@@ -42,7 +42,7 @@ def entrenar_todos():
     """
     print("[TRAINER] Iniciando entrenamiento y comparación de 7 modelos...")
     print("[TRAINER] Modelos: Random Forest, Linear Regression, Gradient Boosting,")
-    print("[TRAINER]          SARIMA, Prophet, MLP Neural Network, Ensemble")
+    print("[TRAINER]          ARIMA, Prophet, MLP Neural Network, Ensemble")
 
     resultado = entrenar_y_comparar_todos()
 

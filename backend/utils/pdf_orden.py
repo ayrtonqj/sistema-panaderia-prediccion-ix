@@ -39,7 +39,7 @@ def generar_pdf_orden(orden_data: dict) -> bytes:
     pdf.ln(3)
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(80, 80, 80)
-    pdf.cell(0, 6, f"# {orden_data.get('id', '—')}", align="C")
+    pdf.cell(0, 6, sanitize(f"# {orden_data.get('id', '-')}"), align="C")
     pdf.ln(10)
 
     pdf.set_draw_color(30, 60, 114)
@@ -62,13 +62,13 @@ def generar_pdf_orden(orden_data: dict) -> bytes:
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(50, 50, 50)
     proveedor = orden_data.get("proveedor", {})
-    pdf.cell(0, 5, f"Proveedor: {proveedor.get('nombre', '—')}")
+    pdf.cell(0, 5, f"Proveedor: {        proveedor.get('nombre', '-')}")
     pdf.ln(5)
-    pdf.cell(0, 5, f"Contacto: {proveedor.get('contacto', '—')}")
+    pdf.cell(0, 5, f"Contacto: {proveedor.get('contacto', '-')}")
     pdf.ln(5)
-    pdf.cell(0, 5, f"Telefono: {proveedor.get('telefono', '—')}")
+    pdf.cell(0, 5, f"Telefono: {proveedor.get('telefono', '-')}")
     pdf.ln(5)
-    pdf.cell(0, 5, f"Email: {proveedor.get('email', '—')}")
+    pdf.cell(0, 5, f"Email: {proveedor.get('email', '-')}")
     pdf.ln(8)
 
     pdf.set_draw_color(200, 200, 200)
@@ -93,7 +93,7 @@ def generar_pdf_orden(orden_data: dict) -> bytes:
     cantidad = orden_data.get("cantidad", 0)
     precio = orden_data.get("precio_unitario", 0)
     subtotal = cantidad * (precio if precio else 0)
-    fecha_nec = orden_data.get("fecha_necesaria", "—")
+    fecha_nec = orden_data.get("fecha_necesaria", "-")
     if hasattr(fecha_nec, 'strftime'):
         fecha_nec = fecha_nec.strftime("%d/%m/%Y")
 
@@ -102,11 +102,11 @@ def generar_pdf_orden(orden_data: dict) -> bytes:
     pdf.set_fill_color(248, 249, 250)
 
     row_data = [
-        str(orden_data.get("id", "—")),
-        orden_data.get("insumo_nombre", orden_data.get("insumo", {}).get("nombre", "—")),
+        str(orden_data.get("id", "-")),
+        orden_data.get("insumo_nombre", orden_data.get("insumo", {}).get("nombre", "-")),
         f"{cantidad:.2f}",
-        f"S/ {precio:.2f}" if precio else "—",
-        f"S/ {subtotal:.2f}" if precio else "—",
+        f"S/ {precio:.2f}" if precio else "-",
+        f"S/ {subtotal:.2f}" if precio else "-",
         fecha_nec,
     ]
     for i, val in enumerate(row_data):
@@ -131,7 +131,7 @@ def generar_pdf_orden(orden_data: dict) -> bytes:
     pdf.ln(5)
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(130, 130, 130)
-    pdf.cell(0, 5, f"Fecha de orden: {orden_data.get('fecha_orden', '—')}", align="L")
+    pdf.cell(0, 5, f"Fecha de orden: {orden_data.get('fecha_orden', '-')}", align="L")
     if hasattr(orden_data.get("fecha_orden"), "strftime"):
         pdf.cell(0, 5, f"Fecha de orden: {orden_data['fecha_orden'].strftime('%d/%m/%Y')}", align="L")
         pdf.ln(5)
@@ -186,8 +186,8 @@ def generar_pdf_sugeridas(ordenes: list[dict]) -> bytes:
         subtotal = cantidad * (precio if precio else 0)
         total_general += subtotal
 
-        fecha_ord = ord.get("fecha_orden", "—")
-        fecha_nec = ord.get("fecha_necesaria", "—")
+        fecha_ord = ord.get("fecha_orden", "-")
+        fecha_nec = ord.get("fecha_necesaria", "-")
         if hasattr(fecha_ord, 'strftime'):
             fecha_ord = fecha_ord.strftime("%d/%m/%Y")
         if hasattr(fecha_nec, 'strftime'):
@@ -199,12 +199,12 @@ def generar_pdf_sugeridas(ordenes: list[dict]) -> bytes:
 
         row_data = [
             str(ord.get("id", idx + 1)),
-            ord.get("proveedor_nombre", ord.get("proveedor", {}).get("nombre", "—")),
-            ord.get("insumo_nombre", ord.get("insumo", {}).get("nombre", "—")),
+            ord.get("proveedor_nombre", ord.get("proveedor", {}).get("nombre", "-")),
+            ord.get("insumo_nombre", ord.get("insumo", {}).get("nombre", "-")),
             f"{cantidad:.2f}",
-            f"S/ {precio:.2f}" if precio else "—",
-            f"S/ {subtotal:.2f}" if precio else "—",
-            ord.get("estado", "—"),
+            f"S/ {precio:.2f}" if precio else "-",
+            f"S/ {subtotal:.2f}" if precio else "-",
+            ord.get("estado", "-"),
             fecha_ord,
             fecha_nec,
         ]

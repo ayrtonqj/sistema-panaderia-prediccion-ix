@@ -226,3 +226,53 @@ export function generarFacturaHTML(cart, invoiceData) {
 </body>
 </html>`
 }
+
+
+export async function descargarPDF(nombreArchivo, elementId) {
+  try {
+    const html2pdf = (await import("html2pdf.js")).default
+    const el = document.getElementById(elementId)
+    if (!el) return
+    await html2pdf().set({ margin: [10,10,10,10], filename: nombreArchivo + ".pdf", html2canvas: { scale: 2 }, jsPDF: { unit: "mm", format: "a4", orientation: "portrait" } }).from(el).save()
+  } catch(e) { console.warn("PDF error:", e) }
+}
+
+export async function descargarExcel(nombreArchivo, columnas, datos) {
+  try {
+    const XLSX = (await import("xlsx")).default || (await import("xlsx"))
+    const filas = datos.map(item => {
+      const row = {}
+      columnas.forEach(c => { row[c.label || c.key] = c.render ? c.render(item) : (item[c.key] ?? "") })
+      return row
+    })
+    const ws = XLSX.utils.json_to_sheet(filas)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Datos")
+    XLSX.writeFile(wb, nombreArchivo + ".xlsx")
+  } catch(e) { console.warn("Excel error:", e) }
+}
+
+export async function enviarPorCorreo(titulo, columnas, filas, destinatario) {
+  const email = destinatario || prompt("Correo destino:", "hendry.angeldones09@gmail.com")
+  if (!email) return
+  try {
+    const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+    const res = await fetch(`${API_BASE}/enviar-reporte`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        destinatario: email,
+        titulo,
+        asunto: `${titulo} - Panaderia Victoria`,
+        mensaje: `Adjunto el reporte: ${titulo}`,
+        columnas,
+        filas,
+      }),
+    })
+    const data = await res.json()
+    alert(data.mensaje || 'Error al enviar')
+  } catch(e) {
+    alert('Error de conexion al enviar correo')
+    console.warn("Email error:", e)
+  }
+}

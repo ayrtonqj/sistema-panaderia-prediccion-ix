@@ -2,27 +2,41 @@
 weather_api.py — Integración con Open-Meteo API (Gratuita, sin Key)
 Obtiene el pronóstico real para Pacasmayo, Perú.
 Coordenadas Pacasmayo: Lat -7.4006, Lon -79.5714
+
+Optimizaciones: cache en memoria con TTL de 3 horas.
 """
 import httpx
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 
-# Coordenadas de Pacasmayo
 LAT = -7.4006
 LON = -79.5714
 
+_cache_pronostico = None
+_cache_timestamp = None
+CACHE_TTL_HORAS = 3
+
+
+def invalidar_cache_clima():
+    global _cache_pronostico, _cache_timestamp
+    _cache_pronostico = None
+    _cache_timestamp = None
+
+
 async def obtener_pronostico_pacasmayo(dias: int = 7):
-    """
-    Consulta la API de Open-Meteo para obtener el pronóstico del clima.
-    Retorna una lista de diccionarios listos para la BD.
-    """
+    global _cache_pronostico, _cache_timestamp
+
+    if _cache_pronostico is not None and _cache_timestamp is not None:
+        if (datetime.now() - _cache_timestamp).total_seconds() < CACHE_TTL_HORAS * 3600:
+            return _cache_pronostico[:min(dias, len(_cache_pronostico))]
+
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": LAT,
         "longitude": LON,
         "daily": ["temperature_2m_max", "temperature_2m_min", "weathercode"],
         "timezone": "auto",
-        "forecast_days": dias
+        "forecast_days": max(dias, 7)
     }
 
     async with httpx.AsyncClient() as client:
@@ -40,8 +54,6 @@ async def obtener_pronostico_pacasmayo(dias: int = 7):
                 t_min = daily["temperature_2m_min"][i]
                 code = daily["weathercode"][i]
 
-                # Mapeo de códigos WMO a nuestras categorías
-                # 0=Despejado, 1-3=Nubosidad, 45-48=Niebla, 51-67=Lluvia
                 condicion = "Soleado"
                 if code in [1, 2, 3]: condicion = "Parcialmente nublado"
                 elif code in [45, 48]: condicion = "Nublado"
@@ -52,13 +64,16 @@ async def obtener_pronostico_pacasmayo(dias: int = 7):
                     "temperatura_promedio": round((t_max + t_min) / 2, 1),
                     "condicion": condicion
                 })
-            
-            return pronosticos
+
+            _cache_pronostico = pronosticos
+            _cache_timestamp = datetime.now()
+
+            return pronosticos[:dias]
 
         except Exception as e:
             print(f"[ERROR] No se pudo obtener clima de Open-Meteo: {e}")
-            # Fallback: retornar promedios básicos si falla la API
             return []
+
 
 if __name__ == "__main__":
     import asyncio

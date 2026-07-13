@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, Float, ForeignKey, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Date, Float, ForeignKey, Boolean, DateTime, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -38,6 +38,7 @@ class DimProducto(Base):
     predicciones = relationship("FactPrediccion", back_populates="producto")
     recetas = relationship("FichaTecnica", back_populates="producto")
     produccion = relationship("FactProduccion", back_populates="producto")
+    pan_pasado = relationship("PanPasado", back_populates="producto")
 
 
 class DimClima(Base):
@@ -61,6 +62,7 @@ class Proveedor(Base):
 
     ordenes = relationship("OrdenCompra", back_populates="proveedor")
     insumos = relationship("InsumoCritico", back_populates="proveedor_principal")
+    insumos_precios = relationship("ProveedorInsumo", back_populates="proveedor")
 
 
 class InsumoCritico(Base):
@@ -72,16 +74,33 @@ class InsumoCritico(Base):
     stock_minimo = Column(Float, nullable=False)
     unidad_medida = Column(String(50), nullable=False)  # Kg, Litros, Unidades
     # FK al proveedor principal → necesario para que n8n genere órdenes automáticas
-    proveedor_id = Column(Integer, ForeignKey("dim_proveedores.id"), nullable=True)
+    proveedor_id = Column(Integer, ForeignKey("dim_proveedores.id"), nullable=True, index=True)
 
     recetas = relationship("FichaTecnica", back_populates="insumo")
     ordenes = relationship("OrdenCompra", back_populates="insumo")
     proveedor_principal = relationship("Proveedor", back_populates="insumos")
+    proveedores_precios = relationship("ProveedorInsumo", back_populates="insumo")
 
 
 # ==========================================
 # TABLA INTERMEDIA — Recetas (para n8n)
 # ==========================================
+
+class ProveedorInsumo(Base):
+    __tablename__ = "proveedores_insumos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    proveedor_id = Column(Integer, ForeignKey("dim_proveedores.id"), nullable=False, index=True)
+    insumo_id = Column(Integer, ForeignKey("insumos_criticos.id"), nullable=False, index=True)
+    precio_unitario = Column(Float, nullable=False)
+
+    proveedor = relationship("Proveedor", back_populates="insumos_precios")
+    insumo = relationship("InsumoCritico", back_populates="proveedores_precios")
+
+    __table_args__ = (
+        Index('ix_prov_insumo_unique', 'proveedor_id', 'insumo_id', unique=True),
+    )
+
 
 class TotpConfig(Base):
     __tablename__ = "totp_config"
@@ -95,12 +114,16 @@ class FichaTecnica(Base):
     __tablename__ = "fichas_tecnicas"
     # Define cuánto insumo necesita cada producto por unidad producida
     id = Column(Integer, primary_key=True, index=True)
-    producto_id = Column(Integer, ForeignKey("dim_productos.id"), nullable=False)
-    insumo_id = Column(Integer, ForeignKey("insumos_criticos.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("dim_productos.id"), nullable=False, index=True)
+    insumo_id = Column(Integer, ForeignKey("insumos_criticos.id"), nullable=False, index=True)
     cantidad_necesaria = Column(Float, nullable=False)  # kg/litros por unidad de producto
 
     producto = relationship("DimProducto", back_populates="recetas")
     insumo = relationship("InsumoCritico", back_populates="recetas")
+
+    __table_args__ = (
+        Index('ix_fichas_tecnicas_prod_insumo', 'producto_id', 'insumo_id', unique=True),
+    )
 
 
 # ==========================================
@@ -111,22 +134,27 @@ class FactVenta(Base):
     __tablename__ = "fact_ventas"
 
     id = Column(Integer, primary_key=True, index=True)
-    producto_id = Column(Integer, ForeignKey("dim_productos.id"), nullable=False)
-    vendedor_id = Column(Integer, ForeignKey("dim_vendedores.id"), nullable=True)
+    producto_id = Column(Integer, ForeignKey("dim_productos.id"), nullable=False, index=True)
+    vendedor_id = Column(Integer, ForeignKey("dim_vendedores.id"), nullable=True, index=True)
     fecha = Column(Date, nullable=False, index=True)
     cantidad_vendida = Column(Float, nullable=False)
+    precio_unitario = Column(Float, nullable=True)
     metodo_pago = Column(String(20), default='efectivo')
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     producto = relationship("DimProducto", back_populates="ventas")
     vendedor = relationship("DimVendedor", back_populates="ventas")
 
+    __table_args__ = (
+        Index('ix_fact_ventas_prod_fecha', 'producto_id', 'fecha'),
+    )
+
 
 class FactMerma(Base):
     __tablename__ = "fact_mermas"
 
     id = Column(Integer, primary_key=True, index=True)
-    producto_id = Column(Integer, ForeignKey("dim_productos.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("dim_productos.id"), nullable=False, index=True)
     fecha = Column(Date, nullable=False, index=True)
     cantidad_merma = Column(Float, nullable=False)
     motivo = Column(String(255), nullable=True)
@@ -134,24 +162,32 @@ class FactMerma(Base):
 
     producto = relationship("DimProducto", back_populates="mermas")
 
+    __table_args__ = (
+        Index('ix_fact_mermas_prod_fecha', 'producto_id', 'fecha'),
+    )
+
 
 class FactProduccion(Base):
     __tablename__ = "fact_produccion"
 
     id = Column(Integer, primary_key=True, index=True)
-    producto_id = Column(Integer, ForeignKey("dim_productos.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("dim_productos.id"), nullable=False, index=True)
     fecha = Column(Date, nullable=False, index=True)
     cantidad_producida = Column(Float, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     producto = relationship("DimProducto", back_populates="produccion")
 
+    __table_args__ = (
+        Index('ix_fact_produccion_prod_fecha', 'producto_id', 'fecha'),
+    )
+
 
 class FactPrediccion(Base):
     __tablename__ = "fact_predicciones"
 
     id = Column(Integer, primary_key=True, index=True)
-    producto_id = Column(Integer, ForeignKey("dim_productos.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("dim_productos.id"), nullable=False, index=True)
     fecha_proyectada = Column(Date, nullable=False, index=True)
     demanda_estimada = Column(Float, nullable=False)
     # Confianza del modelo para reportar precisión en la tesis (OE6)
@@ -161,17 +197,21 @@ class FactPrediccion(Base):
 
     producto = relationship("DimProducto", back_populates="predicciones")
 
+    __table_args__ = (
+        Index('ix_fact_predicciones_prod_fecha', 'producto_id', 'fecha_proyectada'),
+    )
+
 
 class OrdenCompra(Base):
     __tablename__ = "fact_ordenes_compra"
 
     id = Column(Integer, primary_key=True, index=True)
-    proveedor_id = Column(Integer, ForeignKey("dim_proveedores.id"), nullable=False)
-    insumo_id = Column(Integer, ForeignKey("insumos_criticos.id"), nullable=False)
+    proveedor_id = Column(Integer, ForeignKey("dim_proveedores.id"), nullable=False, index=True)
+    insumo_id = Column(Integer, ForeignKey("insumos_criticos.id"), nullable=False, index=True)
     fecha_orden = Column(Date, nullable=False)
     cantidad = Column(Float, nullable=False)
     precio_unitario = Column(Float, nullable=True)  # Para calcular costo de reposición
-    estado = Column(String(50), nullable=False, default="pendiente")  # pendiente/confirmado/recibido/cancelado
+    estado = Column(String(50), nullable=False, default="pendiente", index=True)  # pendiente/confirmado/recibido/cancelado
     es_sugerida = Column(Boolean, default=False)  # Generada automáticamente por el sistema
     cantidad_sugerida_original = Column(Float, nullable=True)  # Cantidad que sugirió el sistema (para editar)
     fecha_necesaria = Column(Date, nullable=True)  # Fecha en que se necesita el insumo
@@ -179,3 +219,22 @@ class OrdenCompra(Base):
 
     proveedor = relationship("Proveedor", back_populates="ordenes")
     insumo = relationship("InsumoCritico", back_populates="ordenes")
+
+    __table_args__ = (
+        Index('ix_fact_ordenes_estado_fecha', 'estado', 'fecha_orden'),
+    )
+
+
+class PanPasado(Base):
+    __tablename__ = "pan_pasado"
+
+    id = Column(Integer, primary_key=True, index=True)
+    producto_id = Column(Integer, ForeignKey("dim_productos.id"), nullable=False, index=True)
+    fecha_origen = Column(Date, nullable=False)
+    cantidad = Column(Float, nullable=False)
+    precio_unitario = Column(Float, nullable=False)
+    cantidad_vendida = Column(Float, default=0)
+    estado = Column(String(20), default="disponible")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    producto = relationship("DimProducto", back_populates="pan_pasado")

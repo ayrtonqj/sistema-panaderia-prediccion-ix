@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/api'
-import { openPrintWindow, tableHeaderHtml } from '../utils/pdf'
+import { openPrintWindow, tableHeaderHtml, descargarExcel, enviarPorCorreo } from '../utils/pdf'
 
 const MEDALS = ['🥇', '🥈', '🥉']
 
@@ -135,12 +135,16 @@ export default function VendedoresPage() {
 
   return (
     <>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
         <div>
           <h1>👥 Vendedores</h1>
           <p style={{ color: '#8892a4' }}>Administra a los vendedores de la panadería</p>
         </div>
-        <button className="btn btn-danger" onClick={generarPDF}>📄 Descargar PDF</button>
+        <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+        <button className="btn btn-danger" onClick={generarPDF} style={{ fontSize: '11px', padding: '3px 8px', flexShrink: 0 }}>📄 PDF</button>
+        <button className="btn" onClick={() => enviarPorCorreo('Vendedores', ['ID', 'Nombre', 'DNI', 'Teléfono', 'Email', 'Ventas Hoy', 'Estado'], (filtrados || []).map(v => { const vh = ventasMap[v.id] || {}; return [v.id, v.nombre + ' ' + (v.apellido || ''), v.dni, v.telefono || '-', v.email || '-', vh.total_unidades ? vh.total_unidades + ' u.' : '0 u.', v.activo ? 'Activo' : 'Inactivo'] }))} style={{ fontSize: '11px', padding: '3px 8px', background: '#e74c3c', color: '#fff', flexShrink: 0 }}>📧 Enviar</button>
+        <button className="btn" onClick={() => descargarExcel('Vendedores', [{ key: "id", label: "ID" }, { key: "nombre", label: "Nombre", render: (i) => i.nombre + " " + (i.apellido || "") }, { key: "dni", label: "DNI" }, { key: "telefono", label: "Telefono" }, { key: "email", label: "Email" }], filtrados)} style={{ fontSize: '11px', padding: '3px 8px', background: '#27ae60', color: '#fff', flexShrink: 0 }}>📊 Excel</button>
+        </div>
       </div>
 
       {top3.length > 0 && (
@@ -197,7 +201,7 @@ export default function VendedoresPage() {
         {result && <p style={{ marginTop: '10px', color: result.includes('✅') ? '#27ae60' : '#e74c3c' }}>{result}</p>}
       </div>
 
-      <div className="card">
+      <div className="card" id="vendedoresTable">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
           <h3 style={{ margin: 0, border: 'none', padding: 0 }}>Vendedores Registrados</h3>
           <input type="text" placeholder="🔍 Buscar por nombre o DNI..."

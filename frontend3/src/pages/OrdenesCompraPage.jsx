@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/api'
-import { openPrintWindow, tableHeaderHtml } from '../utils/pdf'
+import { openPrintWindow, tableHeaderHtml, descargarExcel, enviarPorCorreo } from '../utils/pdf'
 import { formatDateShort } from '../utils/formatters'
 
 export default function OrdenesCompraPage() {
@@ -14,6 +14,7 @@ export default function OrdenesCompraPage() {
   const [showProvForm, setShowProvForm] = useState(false)
   const [provForm, setProvForm] = useState({ nombre: '', contacto: '', telefono: '', direccion: '' })
   const [provResult, setProvResult] = useState('')
+  const [preciosInsumo, setPreciosInsumo] = useState([])
 
   const [form, setForm] = useState({
     proveedor_id: '',
@@ -37,6 +38,20 @@ export default function OrdenesCompraPage() {
   }
 
   useEffect(() => { fetchData() }, [])
+
+  useEffect(() => {
+    if (form.insumo_id) {
+      api.get(`/insumos/${form.insumo_id}/precios`).then(data => {
+        setPreciosInsumo(Array.isArray(data) ? data : [])
+      }).catch(() => setPreciosInsumo([]))
+    } else {
+      setPreciosInsumo([])
+    }
+  }, [form.insumo_id])
+
+  const proveedoresConPrecio = form.insumo_id
+    ? proveedores.filter(p => preciosInsumo.some(pr => pr.proveedor_id === p.id))
+    : proveedores
 
   const sugeridas = ordenes.filter(o => o.es_sugerida && o.estado === 'pendiente')
   const otras = ordenes.filter(o => !o.es_sugerida || o.estado !== 'pendiente')
@@ -193,12 +208,16 @@ export default function OrdenesCompraPage() {
 
   return (
     <>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
         <div>
           <h1>🛒 Órdenes de Compra</h1>
           <p style={{ color: '#8892a4' }}>Gestiona tus compras de insumos</p>
         </div>
-        <button className="btn btn-danger" onClick={generarPDF}>📄 Descargar PDF</button>
+        <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+        <button className="btn btn-danger" onClick={generarPDF} style={{ fontSize: '11px', padding: '3px 8px', flexShrink: 0 }}>📄 PDF</button>
+        <button className="btn" onClick={() => enviarPorCorreo('Órdenes de Compra', ['ID', 'Proveedor', 'Insumo', 'Cantidad', 'Precio', 'Estado'], [...ordenes].sort((a, b) => new Date(b.fecha_orden) - new Date(a.fecha_orden)).map(o => [o.id, o.proveedor_nombre, o.insumo_nombre, o.cantidad, o.precio_unitario ? 'S/ ' + o.precio_unitario : '-', (o.estado || '').toUpperCase()]))} style={{ fontSize: '11px', padding: '3px 8px', background: '#e74c3c', color: '#fff', flexShrink: 0 }}>📧 Enviar</button>
+        <button className="btn" onClick={() => descargarExcel('Ordenes', [{ key: "id", label: "ID" }, { key: "proveedor_nombre", label: "Proveedor" }, { key: "insumo_nombre", label: "Insumo" }, { key: "cantidad", label: "Cantidad" }, { key: "precio_unitario", label: "Precio", render: (i) => i.precio_unitario ? "S/ " + i.precio_unitario : "-" }, { key: "estado", label: "Estado" }], ordenes)} style={{ fontSize: '11px', padding: '3px 8px', background: '#27ae60', color: '#fff', flexShrink: 0 }}>📊 Excel</button>
+        </div>
       </div>
 
       {result && (
@@ -211,15 +230,29 @@ export default function OrdenesCompraPage() {
         <h3>➕ Nueva Orden de Compra Manual</h3>
         <form onSubmit={handleSubmit} style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
           <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-            <select value={form.proveedor_id} onChange={e => setForm(f => ({ ...f, proveedor_id: e.target.value }))} required
-              style={{ flex: 1 }}>
-              <option value="">Seleccionar proveedor</option>
-              {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            <select value={form.proveedor_id} onChange={e => {
+              const p = e.target.value
+              setForm(f => ({ ...f, proveedor_id: p }))
+              const match = preciosInsumo.find(pr => pr.proveedor_id === parseInt(p))
+              if (match) setForm(f => ({ ...f, proveedor_id: p, precio_unitario: String(match.precio_unitario) }))
+            }} required style={{ flex: 1 }}>
+              <option value="">
+                {form.insumo_id
+                  ? `Seleccionar proveedor (${proveedoresConPrecio.length} disponibles)`
+                  : 'Primero selecciona un insumo'}
+              </option>
+              {proveedoresConPrecio.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.nombre} — S/ {preciosInsumo.find(pr => pr.proveedor_id === p.id)?.precio_unitario.toFixed(2)}
+                </option>
+              ))}
             </select>
             <button type="button" className="btn" style={{ padding: '6px 10px', fontSize: '12px', whiteSpace: 'nowrap' }}
               onClick={() => setShowProvForm(!showProvForm)}>+ Prov</button>
           </div>
-          <select value={form.insumo_id} onChange={e => setForm(f => ({ ...f, insumo_id: e.target.value }))} required>
+          <select value={form.insumo_id} onChange={e => {
+            setForm(f => ({ ...f, insumo_id: e.target.value, proveedor_id: '', precio_unitario: '' }))
+          }} required>
             <option value="">Seleccionar insumo</option>
             {insumos.map(i => <option key={i.id} value={i.id}>{i.nombre}</option>)}
           </select>

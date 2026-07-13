@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/api'
 import Pagination from '../components/Pagination'
-import { openPrintWindow, tableHeaderHtml } from '../utils/pdf'
+import { openPrintWindow, tableHeaderHtml, descargarExcel, enviarPorCorreo } from '../utils/pdf'
 
 function proyDias(d) {
   if (d === null || d === undefined) return { label: '—', color: '#95a5a6' }
@@ -133,12 +133,16 @@ export default function InventarioPage() {
 
   return (
     <>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
         <div>
           <h1>🏪 Inventario de Insumos</h1>
           <p style={{ color: '#8892a4' }}>Controla tus materias primas e insumos</p>
         </div>
-        <button className="btn btn-danger" onClick={generarPDF}>📄 Descargar PDF</button>
+        <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+        <button className="btn btn-danger" onClick={generarPDF} style={{ fontSize: '11px', padding: '3px 8px', flexShrink: 0 }}>📄 PDF</button>
+        <button className="btn" onClick={() => enviarPorCorreo('Inventario de Insumos', ['ID', 'Nombre', 'Stock Actual', 'Stock Mínimo', 'Unidad', 'Estado'], (insumos || []).map(i => [i.id, i.nombre, i.stock_actual, i.stock_minimo, i.unidad_medida, i.stock_actual < i.stock_minimo ? '⚠️ Bajo' : '✅ OK']))} style={{ fontSize: '11px', padding: '3px 8px', background: '#e74c3c', color: '#fff', flexShrink: 0 }}>📧 Enviar</button>
+        <button className="btn" onClick={() => descargarExcel('Inventario', [{ key: "id", label: "ID" }, { key: "nombre", label: "Nombre" }, { key: "proveedor_nombre", label: "Proveedor" }, { key: "stock_actual", label: "Stock Actual" }, { key: "stock_minimo", label: "Stock Min" }, { key: "unidad_medida", label: "Unidad" }], insumos)} style={{ fontSize: '11px', padding: '3px 8px', background: '#27ae60', color: '#fff', flexShrink: 0 }}>📊 Excel</button>
+        </div>
       </div>
 
       {alertas.length > 0 && (
@@ -181,7 +185,7 @@ export default function InventarioPage() {
         {result && <p style={{ marginTop: '10px', color: result.includes('✅') ? '#27ae60' : '#e74c3c' }}>{result}</p>}
       </div>
 
-      <div className="card">
+      <div className="card" id="InventarioPageTable">
         <h3>Inventario Actual</h3>
         {loading ? <p>Cargando...</p> : (
           <Pagination

