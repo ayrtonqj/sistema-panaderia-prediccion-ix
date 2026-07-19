@@ -45,7 +45,7 @@ function App() {
     predicciones: ['administrador','gerente'],
     control_perdidas: ['administrador','gerente'],
     reportes_financieros: ['administrador','gerente'],
-    modelo_estadistico: ['administrador'],
+    modelo_estadistico: ['administrador','gerente'],
     anomalias: ['administrador'],
     podios: ['administrador','gerente','vendedor'],
     notificaciones: ['administrador'],

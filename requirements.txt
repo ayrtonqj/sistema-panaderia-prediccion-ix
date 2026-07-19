@@ -20,3 +20,6 @@ django
 django-cors-headers
 python-dateutil
 reportlab
+apscheduler
+pyotp
+qrcode

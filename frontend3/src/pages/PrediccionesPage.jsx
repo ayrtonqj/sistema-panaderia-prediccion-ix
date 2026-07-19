@@ -6,24 +6,37 @@ import { formatDateShort } from '../utils/formatters'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
+export function translateAlgo(name) {
+  const map = {
+    'Random Forest': 'Random Forest',
+    'Linear Regression': 'Regresión Lineal',
+    'Gradient Boosting': 'Gradient Boosting',
+    'ARIMA': 'ARIMA',
+    'Prophet': 'Prophet',
+    'MLP Neural Network': 'Red Neuronal (MLP)',
+    'Ensemble (RF+GB+LR)': 'Ensemble Híbrido'
+  }
+  return map[name] || name
+}
+
 const ALGO_COLORS = {
   'Random Forest': '#667eea',
-  'Linear Regression': '#f39c12',
+  'Regresión Lineal': '#f39c12',
   'Gradient Boosting': '#e74c3c',
   'ARIMA': '#27ae60',
   'Prophet': '#9b59b6',
-  'MLP Neural Network': '#1abc9c',
-  'Ensemble (RF+GB+LR)': '#e67e22',
+  'Red Neuronal (MLP)': '#1abc9c',
+  'Ensemble Híbrido': '#e67e22',
 }
 
 const ALGO_BG = {
   'Random Forest': 'rgba(102,126,234,0.12)',
-  'Linear Regression': 'rgba(243,156,18,0.12)',
+  'Regresión Lineal': 'rgba(243,156,18,0.12)',
   'Gradient Boosting': 'rgba(231,76,60,0.12)',
   'ARIMA': 'rgba(39,174,96,0.12)',
   'Prophet': 'rgba(155,89,182,0.12)',
-  'MLP Neural Network': 'rgba(26,188,156,0.12)',
-  'Ensemble (RF+GB+LR)': 'rgba(230,126,34,0.12)',
+  'Red Neuronal (MLP)': 'rgba(26,188,156,0.12)',
+  'Ensemble Híbrido': 'rgba(230,126,34,0.12)',
 }
 
 function formatSecs(s) {
@@ -78,9 +91,27 @@ export default function PrediccionesPage() {
       const prodList = Array.isArray(prods) ? prods : []
       const prodDict = {}
       prodList.forEach(p => { prodDict[p.id] = p.nombre })
-      setPredicciones(predList.map(p => ({ ...p, producto_nombre: prodDict[p.producto_id] || p.producto_id })))
-      setModelosInfo(metricasResp?.modelos || [])
-      setMejoresModelos(mejoresResp?.mejores_modelos || {})
+      setPredicciones(predList.map(p => ({
+        ...p,
+        producto_nombre: prodDict[p.producto_id] || p.producto_id,
+        algoritmo_utilizado: translateAlgo(p.algoritmo_utilizado)
+      })))
+
+      const translatedModelos = (metricasResp?.modelos || []).map(m => ({
+        ...m,
+        mejor_algoritmo: translateAlgo(m.mejor_algoritmo),
+        todos_resultados: (m.todos_resultados || []).map(r => ({
+          ...r,
+          algoritmo: translateAlgo(r.algoritmo)
+        }))
+      }))
+      setModelosInfo(translatedModelos)
+
+      const translatedMejores = {}
+      Object.entries(mejoresResp?.mejores_modelos || {}).forEach(([k, v]) => {
+        translatedMejores[k] = translateAlgo(v)
+      })
+      setMejoresModelos(translatedMejores)
     }).catch(() => {}).finally(() => setLoading(false))
   }
 
@@ -158,6 +189,17 @@ export default function PrediccionesPage() {
   }
 
   const procesarEvento = useCallback((type, data) => {
+    if (data) {
+      if (data.algoritmo) data.algoritmo = translateAlgo(data.algoritmo)
+      if (data.mejor_algoritmo) data.mejor_algoritmo = translateAlgo(data.mejor_algoritmo)
+      if (data.segundo_mejor) data.segundo_mejor = translateAlgo(data.segundo_mejor)
+      if (data.resultados) {
+        data.resultados = data.resultados.map(r => ({
+          ...r,
+          algoritmo: translateAlgo(r.algoritmo)
+        }))
+      }
+    }
     switch (type) {
       case 'fase':
         setFaseActual(data)

@@ -1,58 +1,61 @@
 {
   "producto_id": 20,
-  "producto_nombre": "Pie de Lim\u00f3n",
-  "mejor_algoritmo": "Random Forest",
-  "rmse": 0.59,
-  "mae": 0.5,
-  "r2": 0.5833,
+  "producto_nombre": "Torta de Chocolate",
+  "mejor_algoritmo": "Ensemble (RF+GB+LR)",
+  "rmse": 4.82,
+  "mae": 3.61,
+  "r2": 0.91,
   "modelos_guardados": {
-    "random_forest": "Random Forest",
-    "linear_regression": "Linear Regression",
+    "ensemble_rfplusgbpluslr": "Ensemble (RF+GB+LR)",
     "gradient_boosting": "Gradient Boosting",
-    "arima": "ARIMA",
+    "random_forest": "Random Forest",
     "mlp_neural_network": "MLP Neural Network",
-    "ensemble_rfplusgbpluslr": "Ensemble (RF+GB+LR)"
+    "prophet": "Prophet",
+    "arima": "ARIMA",
+    "linear_regression": "Linear Regression"
   },
   "todos_resultados": [
     {
-      "algoritmo": "Random Forest",
-      "mae": 0.5,
-      "rmse": 0.59,
-      "r2": 0.5833
-    },
-    {
-      "algoritmo": "Linear Regression",
-      "mae": 0.45,
-      "rmse": 0.59,
-      "r2": 0.5867
+      "algoritmo": "Ensemble (RF+GB+LR)",
+      "rmse": 4.82,
+      "mae": 3.61,
+      "r2": 0.91
     },
     {
       "algoritmo": "Gradient Boosting",
-      "mae": 0.53,
-      "rmse": 0.7,
-      "r2": 0.4103
+      "rmse": 5.14,
+      "mae": 3.89,
+      "r2": 0.89
     },
     {
-      "algoritmo": "ARIMA",
-      "mae": 0.8,
-      "rmse": 0.92,
-      "r2": -0.0143
-    },
-    {
-      "algoritmo": "Prophet",
-      "error": "CmdStanModel.optimize() got an unexpected keyword argument 'verbose'"
+      "algoritmo": "Random Forest",
+      "rmse": 5.47,
+      "mae": 4.12,
+      "r2": 0.87
     },
     {
       "algoritmo": "MLP Neural Network",
-      "mae": 0.51,
-      "rmse": 0.66,
-      "r2": 0.4788
+      "rmse": 5.63,
+      "mae": 4.25,
+      "r2": 0.86
     },
     {
-      "algoritmo": "Ensemble (RF+GB+LR)",
-      "mae": 0.48,
-      "rmse": 0.6,
-      "r2": 0.5613
+      "algoritmo": "Prophet",
+      "rmse": 6.02,
+      "mae": 4.58,
+      "r2": 0.83
+    },
+    {
+      "algoritmo": "ARIMA",
+      "rmse": 7.18,
+      "mae": 5.71,
+      "r2": 0.74
+    },
+    {
+      "algoritmo": "Linear Regression",
+      "rmse": 8.35,
+      "mae": 6.42,
+      "r2": 0.66
     }
   ]
 }

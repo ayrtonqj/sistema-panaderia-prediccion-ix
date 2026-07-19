@@ -74,7 +74,7 @@ const MENU_SECTIONS = [
 const ADMIN_SECTION = {
   title: 'Sistema',
   items: [
-    { key: 'modelo_estadistico', icon: '📈', label: 'Estadisticas del Modelo', roles: ['administrador'] },
+    { key: 'modelo_estadistico', icon: '📈', label: 'Estadisticas del Modelo', roles: ['administrador','gerente'] },
     { key: 'notificaciones', icon: '🔔', label: 'Notificaciones', roles: ['administrador','gerente'] },
     { key: 'seguridad', icon: '🔐', label: 'Seguridad', roles: ['administrador','gerente','vendedor','cocina'] },
   ],
