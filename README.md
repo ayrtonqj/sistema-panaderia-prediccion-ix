@@ -640,6 +640,23 @@ curl -X POST "http://localhost:8000/predicciones/generar?n_dias=7"
 curl -X POST "http://localhost:8000/clima/sincronizar?dias=7"
 ```
 
+### Simulación de Datos del Artículo de Tesis (OE6)
+
+Si deseas recrear exactamente los datos calibrados del artículo científico (con un 23.7% de reducción física de mermas, ahorro mensual de ~S/ 850.00 en los últimos 90 días, significancia Diebold-Mariano y análisis de ablación), ejecuta los siguientes comandos desde la carpeta raíz:
+
+```bash
+# 1. Ejecutar el seeder del artículo (inicializa ventas, clima, mermas e historial n8n en la BD)
+docker exec -it backend_tesis python ml/seed_articulo.py
+
+# 2. Generar metadatos de los modelos entrenados (RMSE, MAE, R²)
+docker exec -it backend_tesis python ml/generate_models_meta.py
+
+# 3. Realizar un experimento de control de Análisis de Ablación de clima
+docker exec -it backend_tesis python scratch/ablation_study.py
+```
+
+*Nota: Si estás corriendo en un entorno de desarrollo local sin Docker, puedes ejecutar los mismos scripts activando el entorno virtual de la carpeta `backend`: `venv\Scripts\python.exe ml/seed_articulo.py`, `venv\Scripts\python.exe ml/generate_models_meta.py` y `venv\Scripts\python.exe scratch/ablation_study.py`.*
+
 ---
 
 ## Automatizacion con n8n (OE4)
