@@ -18,54 +18,81 @@ export default function ChatbotWidget() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  function startListening() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition) {
-      alert('Tu navegador no soporta reconocimiento de voz. Prueba desde Google Chrome o Microsoft Edge.')
-      return
-    }
+  async function startListening() {
     if (listening) {
       stopListening()
+      return
+    }
+
+    // 1. Forzar solicitud explícita de permiso de micrófono al navegador (MediaDevices)
+    let micStream = null
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        // Detener los tracks de prueba una vez concedido el permiso
+        micStream.getTracks().forEach(t => t.stop())
+      }
+    } catch (err) {
+      console.error('Error al acceder al micrófono:', err)
+      alert('⚠️ El navegador bloqueó el acceso al micrófono. Por favor haz clic en el ícono de candado 🔒 o micrófono en la barra de dirección del navegador y selecciona "Permitir".')
+      setListening(false)
+      return
+    }
+
+    // 2. Iniciar el motor SpeechRecognition
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      alert('Tu navegador no soporta reconocimiento de voz nativo. Por favor abre el sistema desde Google Chrome o Microsoft Edge.')
       return
     }
 
     try {
       const recognition = new SpeechRecognition()
       recognition.lang = 'es-PE'
-      recognition.interimResults = false
+      recognition.interimResults = true
       recognition.continuous = false
       recognition.maxAlternatives = 1
+
+      let finalTranscript = ''
 
       recognition.onstart = () => {
         setListening(true)
       }
 
       recognition.onresult = (event) => {
-        const transcript = event.results[0][0]?.transcript || ''
-        if (transcript.trim()) {
-          setInput(transcript)
-          if (inputRef.current) inputRef.current.value = transcript
-          // Enviar automáticamente el mensaje de voz capturado
-          sendMessageWithText(transcript, true)
+        let currentText = ''
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          currentText += event.results[i][0].transcript
+        }
+        if (currentText.trim()) {
+          finalTranscript = currentText
+          setInput(currentText)
+          if (inputRef.current) inputRef.current.value = currentText
         }
       }
 
       recognition.onerror = (e) => {
         console.warn('Error en reconocimiento de voz:', e.error)
         setListening(false)
-        if (e.error === 'not-allowed') {
-          alert('Por favor otorga permiso al navegador para acceder al micrófono.')
+        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+          alert('⚠️ Permiso de micrófono denegado. Por favor actívalo en la configuración del navegador.')
+        } else if (e.error === 'no-speech') {
+          console.log('No se detectó voz.')
         }
       }
 
       recognition.onend = () => {
         setListening(false)
+        if (finalTranscript.trim()) {
+          // Enviar el mensaje capturado de forma automática
+          sendMessageWithText(finalTranscript, true)
+        }
       }
 
       recognition.start()
       recognitionRef.current = recognition
     } catch (err) {
-      console.error(err)
+      console.error('Error al iniciar reconocedor:', err)
       setListening(false)
     }
   }
