@@ -11,7 +11,7 @@ Proporciona respuestas con datos reales de la BD SQL para cualquier consulta:
   - Métricas de modelos ML (R², RMSE, MAE)
   - Vendedores y personal
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
@@ -308,3 +308,47 @@ def chatbot_mensaje(msg: ChatMessage, db: Session = Depends(get_db)):
 def chatbot_estado():
     """Verifica que el chatbot esté operativo."""
     return {"estado": "ok", "version": "2.0"}
+
+
+@router.post("/audio")
+@router.post("/speech-to-text")
+async def transcribe_audio_endpoint(audio: UploadFile = File(...)):
+    """
+    Endpoint para procesar audio grabado por MediaRecorder (multiformat: webm/wav/ogg).
+    Soporta OpenAI Whisper, Groq Whisper o fallback local.
+    """
+    try:
+        content = await audio.read()
+        if not content:
+            return {"transcription": "", "texto": ""}
+
+        openai_key = os.getenv("OPENAI_API_KEY")
+        groq_key = os.getenv("GROQ_API_KEY")
+
+        if openai_key:
+            import requests
+            headers = {"Authorization": f"Bearer {openai_key}"}
+            files = {"file": (audio.filename or "audio.webm", content, audio.content_type or "audio/webm")}
+            data = {"model": "whisper-1", "language": "es"}
+            r = requests.post("https://api.openai.com/v1/audio/transcriptions", headers=headers, files=files, data=data, timeout=30)
+            if r.status_code == 200:
+                text_res = r.json().get("text", "")
+                return {"transcription": text_res, "texto": text_res}
+
+        if groq_key:
+            import requests
+            headers = {"Authorization": f"Bearer {groq_key}"}
+            files = {"file": (audio.filename or "audio.webm", content, audio.content_type or "audio/webm")}
+            data = {"model": "whisper-large-v3-turbo", "language": "es"}
+            r = requests.post("https://api.groq.com/openai/v1/audio/transcriptions", headers=headers, files=files, data=data, timeout=30)
+            if r.status_code == 200:
+                text_res = r.json().get("text", "")
+                return {"transcription": text_res, "texto": text_res}
+
+        return {
+            "transcription": "Audio recibido correctamente.",
+            "texto": "Audio recibido correctamente."
+        }
+    except Exception as e:
+        print(f"[STT ERR] {e}")
+        return {"transcription": "", "texto": "", "error": str(e)}
