@@ -704,6 +704,49 @@ VITE_DEMO_PASSWORD=admin
 > * Esta pantalla incluye un contador en tiempo real, número de intentos de reconexión y explicación clara para el visitante de que el backend se está activando (pudiendo tomar entre 1 y 2 minutos).
 > * Una vez que el backend responde, se autentica automáticamente como Administrador e ingresa al Dashboard.
 
+### 🌐 Guía de Despliegue en la Nube (Render + Vercel)
+
+#### 🔹 Paso 1: Desplegar el Backend en Render
+1. Inicia sesión en [Render Dashboard](https://dashboard.render.com/).
+2. **Crear Base de Datos PostgreSQL:**
+   - Clic en **New +** ➔ **PostgreSQL**.
+   - **Name:** `sistema-panaderia-db`
+   - **Database:** `panaderia_victoria`
+   - Guarda la base de datos y copia la URL interna o de conexión (`Internal Database URL`).
+3. **Crear Servicio Web (Backend):**
+   - Clic en **New +** ➔ **Web Service**.
+   - Conecta el repositorio GitHub `ayrtonqj/sistema-panaderia-prediccion-ix`.
+   - **Name:** `sistema-panaderia-backend`
+   - **Root Directory:** `backend`
+   - **Environment:** `Python 3`
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
+   - **Variables de Entorno (Environment Variables):**
+     - `DATABASE_URL`: *(Pegar la URL de la BD de Render)*
+     - `PYTHON_VERSION`: `3.11.0`
+   - Clic en **Create Web Service** y copia la URL pública asignada (ejemplo: `https://sistema-panaderia-backend.onrender.com`).
+4. **Inicializar datos en Render:**
+   - Una vez desplegado, ve a la pestaña **Shell** del servicio en Render y ejecuta:
+     ```bash
+     python ml/seed_articulo.py
+     python ml/trainer.py
+     python ml/generate_models_meta.py
+     ```
+
+#### 🔹 Paso 2: Desplegar el Frontend en Vercel
+1. Inicia sesión en [Vercel Dashboard](https://vercel.com/).
+2. Clic en **Add New...** ➔ **Project**.
+3. Importa el repositorio `ayrtonqj/sistema-panaderia-prediccion-ix`.
+4. Configuración del proyecto:
+   - **Framework Preset:** `Vite`
+   - **Root Directory:** Haz clic en Edit y selecciona la carpeta `frontend3`.
+   - **Build Command:** `npm run build`
+   - **Output Directory:** `dist`
+5. **Variables de Entorno en Vercel (Environment Variables):**
+   - `VITE_API_URL`: `https://sistema-panaderia-backend.onrender.com`
+   - `VITE_DEMO_MODE`: `true`
+6. Clic en **Deploy**. ¡Tu sistema estará en línea y accesible públicamente!
+
 ---
 
 ## Automatizacion con n8n (OE4)

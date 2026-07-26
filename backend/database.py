@@ -11,6 +11,9 @@ DATABASE_URL = os.getenv(
     "postgresql://eduardo:123456@localhost:5432/panaderia_victoria"
 )
 
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
