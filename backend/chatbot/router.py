@@ -83,23 +83,96 @@ def chatbot_mensaje(msg: ChatMessage, db: Session = Depends(get_db)):
         hoy = date.today()
 
         # 1. PREDICCIONES / PROYECCIONES DE PRODUCCIÓN
-        if any(w in mensaje_lower for w in ["predicci", "proyecci", "pronost", "demanda", "cuánto producir", "cuanto producir", "lista por producto", "producción recomendada", "produccion recomendada"]):
-            reciente = db.query(models.FactPrediccion.fecha_proyectada).order_by(models.FactPrediccion.fecha_proyectada.desc()).first()
-            if reciente:
-                fecha_target = reciente[0]
-                preds = db.query(
-                    models.DimProducto.nombre,
-                    models.FactPrediccion.demanda_estimada,
-                    models.FactPrediccion.algoritmo_utilizado
+        if any(w in mensaje_lower for w in ["predicci", "proyecci", "pronost", "demanda", "cuánto producir", "cuanto producir", "producción recomendada", "produccion recomendada", "frances", "francés", "integral", "torta", "cuanto", "cuánto"]):
+            hoy = date.today()
+            if "mañana" in mensaje_lower or "manana" in mensaje_lower:
+                fecha_deseada = hoy + timedelta(days=1)
+            elif "hoy" in mensaje_lower:
+                fecha_deseada = hoy
+            else:
+                fecha_deseada = None
+
+            # Detectar si se consulta por un producto específico
+            productos_db = db.query(models.DimProducto).all()
+            prod_encontrado = None
+            for p in productos_db:
+                p_nombre_lower = p.nombre.lower()
+                if p_nombre_lower in mensaje_lower:
+                    prod_encontrado = p
+                    break
+                tokens = p_nombre_lower.split()
+                for token in tokens:
+                    if len(token) > 3 and token in mensaje_lower and token not in ["pan", "para", "de", "del", "con"]:
+                        prod_encontrado = p
+                        break
+                if prod_encontrado:
+                    break
+
+            # Buscar la fecha proyectada target
+            reciente_fecha = None
+            if fecha_deseada:
+                reciente_fecha = db.query(models.FactPrediccion.fecha_proyectada).filter(
+                    models.FactPrediccion.fecha_proyectada == fecha_deseada
+                ).first()
+
+            if not reciente_fecha:
+                reciente_fecha = db.query(models.FactPrediccion.fecha_proyectada).filter(
+                    models.FactPrediccion.fecha_proyectada >= hoy
+                ).order_by(models.FactPrediccion.fecha_proyectada.asc()).first()
+
+            if not reciente_fecha:
+                reciente_fecha = db.query(models.FactPrediccion.fecha_proyectada).order_by(
+                    models.FactPrediccion.fecha_proyectada.desc()
+                ).first()
+
+            if reciente_fecha:
+                fecha_target = reciente_fecha[0]
+
+                # Si la pregunta es por un producto específico (ej: Pan Francés)
+                if prod_encontrado:
+                    preds_prod = db.query(
+                        models.FactPrediccion
+                    ).filter(
+                        models.FactPrediccion.producto_id == prod_encontrado.id,
+                        models.FactPrediccion.fecha_proyectada == fecha_target
+                    ).order_by(
+                        models.FactPrediccion.confianza_prediccion.desc().nullslast()
+                    ).all()
+
+                    if preds_prod:
+                        mejor = preds_prod[0]
+                        conf_pct = f"{round(float(mejor.confianza_prediccion or 0) * 100, 1)}%" if mejor.confianza_prediccion is not None else "—"
+                        res = (
+                            f"🔮 **Predicción de Producción para {prod_encontrado.nombre}:**\n\n"
+                            f"• **Fecha proyectada:** {fecha_target.strftime('%d/%m/%Y')}\n"
+                            f"• **Producción recomendada:** **{round(float(mejor.demanda_estimada))} unidades**\n"
+                            f"• **Modelo seleccionado:** {mejor.algoritmo_utilizado or 'Estadístico'} *(Confianza: {conf_pct})*\n\n"
+                            f"💡 *Recomendación:* Se sugiere preparar esta cantidad para cubrir la demanda proyectada optimizando insumos."
+                        )
+                        return {"respuesta": res, "mensaje": res}
+
+                # Si es una consulta general (mostrar solo el MEJOR modelo por cada producto)
+                raw_preds = db.query(
+                    models.FactPrediccion, models.DimProducto.nombre
                 ).join(
                     models.DimProducto, models.FactPrediccion.producto_id == models.DimProducto.id
                 ).filter(
                     models.FactPrediccion.fecha_proyectada == fecha_target
-                ).order_by(models.DimProducto.nombre).all()
+                ).order_by(
+                    models.DimProducto.nombre,
+                    models.FactPrediccion.confianza_prediccion.desc().nullslast()
+                ).all()
 
-                if preds:
-                    lineas = [f"• {p.nombre}: **{round(float(p.demanda_estimada))} unidades**" for p in preds]
-                    res = f"🔮 **Predicciones de Producción por Producto (Fecha: {fecha_target}):**\n\n" + "\n".join(lineas)
+                if raw_preds:
+                    seen = set()
+                    lineas = []
+                    for pred_obj, p_nombre in raw_preds:
+                        if p_nombre not in seen:
+                            seen.add(p_nombre)
+                            algo_str = f" *({pred_obj.algoritmo_utilizado})*" if pred_obj.algoritmo_utilizado else ""
+                            lineas.append(f"• {p_nombre}: **{round(float(pred_obj.demanda_estimada))} unidades**{algo_str}")
+
+                    res = f"🔮 **Predicciones de Producción Recomendadas (Fecha: {fecha_target.strftime('%d/%m/%Y')}):**\n\n" + "\n".join(lineas)
                     return {"respuesta": res, "mensaje": res}
 
         # 2. STOCK DE INSUMOS / INVENTARIO
