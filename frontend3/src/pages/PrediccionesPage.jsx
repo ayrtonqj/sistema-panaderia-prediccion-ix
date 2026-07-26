@@ -323,8 +323,8 @@ export default function PrediccionesPage() {
       const data = await api.post('/predicciones/generar?n_dias=7')
       setPredResult(`✅ ${data.mensaje || data.total_predicciones + ' predicciones generadas'}`)
       setTimeout(() => { setPredResult(''); fetchData() }, 2000)
-    } catch {
-      setPredResult('⚠️ Error al generar predicciones')
+    } catch (e) {
+      setPredResult(`⚠️ ${e.response?.data?.detail || e.message || 'Error al generar predicciones'}`)
     }
   }
 
@@ -334,20 +334,20 @@ export default function PrediccionesPage() {
       const data = await api.post('/clima/sincronizar?dias=7')
       setClimaResult(`✅ Clima sincronizado: ${data.registros_insertados || 0} nuevos`)
       setTimeout(() => setClimaResult(''), 3000)
-    } catch {
-      setClimaResult('Error al sincronizar clima')
+    } catch (e) {
+      setClimaResult(`⚠️ ${e.response?.data?.detail || e.message || 'Error al sincronizar clima'}`)
     }
   }
 
   const optimizarHiperparametros = async () => {
-    setOptimResult('Optimizando hiperparametros...')
+    setOptimResult('Optimizando hiperparámetros...')
     setOptimizando(true)
     try {
       const data = await api.post('/ml/optimizar')
       setOptimResult(`✅ ${data.total_productos_optimizados || 0} productos optimizados`)
       setTimeout(() => setOptimResult(''), 4000)
-    } catch {
-      setOptimResult('⚠️ Error al optimizar')
+    } catch (e) {
+      setOptimResult(`⚠️ ${e.response?.data?.detail || e.message || 'Error al optimizar'}`)
     } finally {
       setOptimizando(false)
     }

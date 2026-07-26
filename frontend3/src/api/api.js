@@ -3,7 +3,12 @@ const API_BASE = import.meta.env.VITE_API_URL || `http://${window.location.hostn
 const TIMEOUTS = {
   'POST:/ml/entrenar': 300000,
   'POST:/ml/comparar': 300000,
+  'POST:/ml/optimizar': 300000,
+  'POST:/predicciones/generar': 300000,
+  'POST:/clima/sincronizar': 120000,
   'POST:/datos/semilla': 120000,
+  'GET:/datos/inicializar-todo': 300000,
+  'POST:/datos/inicializar-todo': 300000,
   'POST:/auth/login': 120000,
 }
 
@@ -11,7 +16,7 @@ async function apiFetch(path, options = {}) {
   const url = path.startsWith('http') ? path : `${API_BASE}${path}`
   const method = options.method || 'GET'
   const key = `${method}:${path.split('?')[0]}`
-  const ms = TIMEOUTS[key] || 15000
+  const ms = TIMEOUTS[key] || 60000
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), ms)
   try {
