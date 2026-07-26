@@ -18,31 +18,32 @@ export default function ChatbotWidget() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  const streamRef = useRef(null)
+
   async function startListening() {
     if (listening) {
       stopListening()
       return
     }
 
-    // 1. Forzar solicitud explícita de permiso de micrófono al navegador (MediaDevices)
-    let micStream = null
+    // 1. Solicitar permiso explícito y mantener el micrófono abierto durante la sesión
     try {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-        // Detener los tracks de prueba una vez concedido el permiso
-        micStream.getTracks().forEach(t => t.stop())
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        streamRef.current = micStream
       }
     } catch (err) {
       console.error('Error al acceder al micrófono:', err)
-      alert('⚠️ El navegador bloqueó el acceso al micrófono. Por favor haz clic en el ícono de candado 🔒 o micrófono en la barra de dirección del navegador y selecciona "Permitir".')
+      alert('⚠️ No se pudo acceder al micrófono. Haz clic en el ícono de candado 🔒 o micrófono en la barra del navegador para darle permiso.')
       setListening(false)
       return
     }
 
-    // 2. Iniciar el motor SpeechRecognition
+    // 2. Verificar compatibilidad con SpeechRecognition
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) {
-      alert('Tu navegador no soporta reconocimiento de voz nativo. Por favor abre el sistema desde Google Chrome o Microsoft Edge.')
+      alert('Tu navegador no soporta reconocimiento de voz nativo. Usa Google Chrome o Microsoft Edge.')
+      stopListening()
       return
     }
 
@@ -73,18 +74,17 @@ export default function ChatbotWidget() {
 
       recognition.onerror = (e) => {
         console.warn('Error en reconocimiento de voz:', e.error)
-        setListening(false)
+        stopListening()
         if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-          alert('⚠️ Permiso de micrófono denegado. Por favor actívalo en la configuración del navegador.')
-        } else if (e.error === 'no-speech') {
-          console.log('No se detectó voz.')
+          alert('⚠️ El navegador denegó el acceso al micrófono. Por favor habilítalo en la barra de navegación 🔒.')
+        } else if (e.error === 'network') {
+          alert('⚠️ Error de red con el motor de voz de Chrome. Asegúrate de tener conexión a Internet.')
         }
       }
 
       recognition.onend = () => {
-        setListening(false)
+        stopListening()
         if (finalTranscript.trim()) {
-          // Enviar el mensaje capturado de forma automática
           sendMessageWithText(finalTranscript, true)
         }
       }
@@ -93,13 +93,17 @@ export default function ChatbotWidget() {
       recognitionRef.current = recognition
     } catch (err) {
       console.error('Error al iniciar reconocedor:', err)
-      setListening(false)
+      stopListening()
     }
   }
 
   function stopListening() {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop())
+      streamRef.current = null
+    }
     if (recognitionRef.current) {
-      recognitionRef.current.stop()
+      try { recognitionRef.current.stop() } catch {}
       recognitionRef.current = null
     }
     setListening(false)
