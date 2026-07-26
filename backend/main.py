@@ -2718,8 +2718,8 @@ def inicializar_todo_render():
         seed_main()
 
         # 2. Entrenar modelos ML
-        from ml.trainer import entrenar_todos_los_productos
-        entrenar_todos_los_productos()
+        from ml.trainer import entrenar_todos
+        entrenar_todos()
 
         # 3. Generar metadatos
         from ml.generate_models_meta import main as meta_main
