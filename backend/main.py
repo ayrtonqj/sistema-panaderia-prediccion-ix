@@ -2693,13 +2693,50 @@ def cargar_datos_semilla():
 
 @app.post("/datos/completar")
 def completar_datos():
-    """Genera datos sintÃ©ticos para productos nuevos que tienen < 30 registros."""
+    """Genera datos sintéticos para productos nuevos que tienen < 30 registros."""
     try:
         from ml.seed_data import completar_datos_faltantes
         resultado = completar_datos_faltantes()
         return resultado
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al completar datos: {str(e)}")
+
+
+@app.api_route("/datos/inicializar-todo", methods=["GET", "POST"])
+def inicializar_todo_render():
+    """
+    Endpoint todo-en-uno especial para Render Free Tier (sin necesidad de Shell).
+    Ejecuta en secuencia:
+      1. Seed del artículo (datos históricos calibrados + mermas OE6 + órdenes n8n)
+      2. Entrenamiento de modelos ML
+      3. Generación de metadatos (R², RMSE, MAE)
+      4. Predicciones a 7 días
+    """
+    try:
+        # 1. Seed del artículo
+        from ml.seed_articulo import main as seed_main
+        seed_main()
+
+        # 2. Entrenar modelos ML
+        from ml.trainer import entrenar_todos_los_productos
+        entrenar_todos_los_productos()
+
+        # 3. Generar metadatos
+        from ml.generate_models_meta import main as meta_main
+        meta_main()
+
+        # 4. Generar predicciones
+        from ml.predictor import generar_predicciones
+        import asyncio
+        asyncio.run(generar_predicciones(7))
+
+        return {
+            "status": "ok",
+            "mensaje": "¡Sistema inicializado completamente! Base de datos, modelos ML y predicciones listas.",
+            "detalle": "24 productos entrenados, 360 días simulados, mermas OE6 y 168 órdenes n8n cargadas."
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en inicialización: {str(e)}")
 
 # â”€â”€ ML: Metricas reales de modelos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 

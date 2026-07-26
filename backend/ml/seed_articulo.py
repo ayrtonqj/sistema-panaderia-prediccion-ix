@@ -273,8 +273,12 @@ def main():
                         models.DimVendedor.activo == True).all()
 
         if not productos:
-            print("[ERROR] No hay productos en la BD.")
-            return
+            print("[INFO] BD vacía. Inicializando productos base con run_seed()...")
+            from ml.seed_data import run_seed
+            run_seed()
+            productos  = db.query(models.DimProducto).all()
+            vendedores = db.query(models.DimVendedor).filter(
+                            models.DimVendedor.activo == True).all()
 
         # ── Restaurar precios y costos originales ─────────────────────────
         # (El ratio anterior pudo haber distorsionado los costos)

@@ -725,13 +725,14 @@ VITE_DEMO_PASSWORD=admin
      - `DATABASE_URL`: *(Pegar la URL de la BD de Render)*
      - `PYTHON_VERSION`: `3.11.0`
    - Clic en **Create Web Service** y copia la URL pública asignada (ejemplo: `https://sistema-panaderia-backend.onrender.com`).
-4. **Inicializar datos en Render:**
-   - Una vez desplegado, ve a la pestaña **Shell** del servicio en Render y ejecuta:
-     ```bash
-     python ml/seed_articulo.py
-     python ml/trainer.py
-     python ml/generate_models_meta.py
+4. **Inicializar datos en Render (100% Gratuito / Sin necesidad de Shell Terminal):**
+   - Como el Plan Free de Render no incluye consola de comandos (Shell), hemos creado un **endpoint todo-en-uno**.
+   - Simplemente abre la siguiente URL directamente en tu navegador web (reemplazando con la URL de tu backend en Render):
      ```
+     https://sistema-panaderia-backend.onrender.com/datos/inicializar-todo
+     ```
+   - *(O desde tu terminal local ejecuta: `curl.exe https://sistema-panaderia-backend.onrender.com/datos/inicializar-todo`)*
+   - Esto poblará la BD vacía, generará los 360 días de datos de tesis, entrenará los modelos ML y guardará las predicciones automáticamente.
 
 #### 🔹 Paso 2: Desplegar el Frontend en Vercel
 1. Inicia sesión en [Vercel Dashboard](https://vercel.com/).
