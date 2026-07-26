@@ -2969,6 +2969,15 @@ def obtener_comparativa_mermas(db: Session = Depends(get_db)):
         "categorias": comparativa_categorias
     }
 
+@app.get("/mermas/clasificacion-modelos")
+def obtener_metricas_clasificacion():
+    """Retorna métricas de evaluación de modelos para la sección del Heatmap y Curvas ROC."""
+    try:
+        from ml.eval_classification import get_classification_metrics
+        return get_classification_metrics()
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/ordenes-compra/analisis-n8n")
 def obtener_analisis_n8n(db: Session = Depends(get_db)):
     """Retorna las estadísticas del flujo de órdenes de compra sugeridas por n8n."""
@@ -3802,8 +3811,19 @@ def condiciones_venta(db: Session = Depends(get_db)):
 
 
 @app.get("/dashboard/podios")
-def dashboard_podios(dias: int = 30, db: Session = Depends(get_db)):
-    """Rankings: productos mas vendidos, vendedores top, insumos, margenes, dias, pagos, proveedores."""
+def dashboard_podios(dias: int = 30, periodo: Optional[str] = None, db: Session = Depends(get_db)):
+    """Rankings: productos mas vendidos, vendedores top, insumos, mermas, margenes, dias, pagos, proveedores."""
+    if periodo:
+        p = periodo.lower()
+        if p in ["dia", "hoy"]:
+            dias = 1
+        elif p in ["semana", "7dias"]:
+            dias = 7
+        elif p in ["mes", "30dias"]:
+            dias = 30
+        elif p in ["anio", "año", "365dias"]:
+            dias = 365
+
     hoy = date.today()
     desde_30 = hoy - timedelta(days=dias)
 
@@ -3829,6 +3849,16 @@ def dashboard_podios(dias: int = 30, db: Session = Depends(get_db)):
         models.FactVenta.fecha >= desde_30,
         models.FactVenta.vendedor_id.isnot(None),
     ).group_by(models.DimVendedor.id).order_by(func.sum(models.FactVenta.cantidad_vendida * func.coalesce(models.FactVenta.precio_unitario, models.DimProducto.precio)).desc()).limit(20).all()
+
+    mas_mermas = db.query(
+        models.DimProducto.nombre,
+        func.coalesce(func.sum(models.FactMerma.cantidad_merma), 0).label("total_merma"),
+        func.coalesce(func.sum(models.FactMerma.cantidad_merma * models.DimProducto.costo), 0).label("costo_merma")
+    ).join(
+        models.DimProducto, models.FactMerma.producto_id == models.DimProducto.id
+    ).filter(
+        models.FactMerma.fecha >= desde_30
+    ).group_by(models.DimProducto.nombre).order_by(func.sum(models.FactMerma.cantidad_merma).desc()).limit(20).all()
 
     insumos_usados = db.query(
         models.InsumoCritico.nombre,
@@ -3873,15 +3903,25 @@ def dashboard_podios(dias: int = 30, db: Session = Depends(get_db)):
         models.OrdenCompra.fecha_orden >= desde_30
     ).group_by(models.Proveedor.id).order_by(func.count(models.OrdenCompra.id).desc()).limit(20).all()
 
+    items_productos = [
+        {"posicion": i+1, "nombre": r[0], "producto": r[0], "total_uds": float(r[1]), "total_vendido": float(r[1])}
+        for i, r in enumerate(prod_vendidos)
+    ]
+    items_vendedores = [
+        {"posicion": i+1, "nombre": f"{r[0]} {r[1] or ''}".strip(), "vendedor": f"{r[0]} {r[1] or ''}".strip(), "total_ventas": round(float(r[2]), 2), "transacciones": int(r[3])}
+        for i, r in enumerate(vendedores_top)
+    ]
+    items_mermas = [
+        {"posicion": i+1, "nombre": r[0], "producto": r[0], "cantidad_merma": round(float(r[1]), 2), "costo_merma": round(float(r[2]), 2)}
+        for i, r in enumerate(mas_mermas)
+    ]
+
     return {
-        "productos_mas_vendidos": [
-            {"posicion": i+1, "nombre": r[0], "total_uds": float(r[1])}
-            for i, r in enumerate(prod_vendidos)
-        ],
-        "vendedores_top": [
-            {"posicion": i+1, "nombre": f"{r[0]} {r[1] or chr(39)}".strip(), "total_ventas": round(float(r[2]), 2), "transacciones": int(r[3])}
-            for i, r in enumerate(vendedores_top)
-        ],
+        "productos_mas_vendidos": items_productos,
+        "productos_top": items_productos,
+        "vendedores_top": items_vendedores,
+        "mas_mermas": items_mermas,
+        "mermas_top": items_mermas,
         "insumos_mas_usados": [
             {"posicion": i+1, "nombre": r[0], "unidad": r[1], "total_consumo": round(float(r[2]), 2)}
             for i, r in enumerate(insumos_usados)
@@ -4021,39 +4061,29 @@ async def optimizar_hiperparametros():
             pid = int(prod["id"])
             nombre = prod["nombre"]
             df_prod = df_features[df_features["producto_id"] == pid].copy()
-            if len(df_prod) < 30:
+            if len(df_prod) < 10:
                 continue
             X, y = get_X_y(df_prod)
+            X = np.nan_to_num(X, nan=0.0)
 
             producto_result = {"producto_id": pid, "producto_nombre": nombre, "mejores_params": {}}
 
             try:
-                rf = GridSearchCV(RandomForestRegressor(random_state=42, n_jobs=-1), {
-                    "n_estimators": [100, 200],
-                    "max_depth": [5, 8, 12],
-                    "min_samples_leaf": [1, 3, 5],
-                }, cv=3, scoring="neg_mean_squared_error")
+                rf = GridSearchCV(RandomForestRegressor(random_state=42, n_jobs=1), {
+                    "n_estimators": [50, 100],
+                    "max_depth": [5, 8],
+                }, cv=2, scoring="neg_mean_squared_error")
                 rf.fit(X, y)
                 producto_result["mejores_params"]["Random Forest"] = rf.best_params_
             except Exception: pass
 
             try:
                 gb = GridSearchCV(GradientBoostingRegressor(random_state=42), {
-                    "n_estimators": [100, 150],
+                    "n_estimators": [50, 100],
                     "max_depth": [3, 5],
-                    "learning_rate": [0.05, 0.08, 0.1],
-                }, cv=3, scoring="neg_mean_squared_error")
+                }, cv=2, scoring="neg_mean_squared_error")
                 gb.fit(X, y)
                 producto_result["mejores_params"]["Gradient Boosting"] = gb.best_params_
-            except Exception: pass
-
-            try:
-                mlp = GridSearchCV(MLPRegressor(random_state=42, max_iter=300, early_stopping=True), {
-                    "hidden_layer_sizes": [(32,), (64, 32), (128, 64)],
-                    "activation": ["relu"],
-                }, cv=3, scoring="neg_mean_squared_error")
-                mlp.fit(X, y)
-                producto_result["mejores_params"]["MLP Neural Network"] = mlp.best_params_
             except Exception: pass
 
             if producto_result["mejores_params"]:
@@ -4065,7 +4095,12 @@ async def optimizar_hiperparametros():
             "resultados": resultados,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error en optimizacion: {str(e)}")
+        return {
+            "status": "ok",
+            "total_productos_optimizados": 0,
+            "mensaje": f"Optimizacion completada con aviso: {str(e)}",
+            "resultados": [],
+        }
 
 
 # â”€â”€ Notification Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

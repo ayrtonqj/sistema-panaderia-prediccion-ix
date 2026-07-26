@@ -385,16 +385,23 @@ export default function PrediccionesPage() {
       </div>
 
       <div className="card">
+        <div style={{ marginBottom: '10px', fontSize: '12px', color: '#64748b', fontWeight: 600 }}>
+          📌 Flujo recomendado para actualizar predicciones: Paso 1 ➔ Paso 2 ➔ Paso 3 ➔ Paso 4
+        </div>
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <button className="btn" onClick={sincronizarClima} style={{ background: '#3b82f6', color: '#fff', fontWeight: 600, border: 'none' }}>
+            1. 🌤️ Sincronizar Clima
+          </button>
           <button className="btn" onClick={iniciarComparacionStream} disabled={streaming}
             style={{ background: streaming ? '#718096' : 'linear-gradient(135deg,#667eea,#764ba2)', color: '#fff', fontWeight: 600, border: 'none' }}>
-            {streaming ? '⏳ Comparando...' : '⚡ Comparar 7 Modelos (Tiempo Real)'}
+            {streaming ? '⏳ Comparando...' : '2. ⚡ Comparar 7 Modelos'}
           </button>
-          <button className="btn" onClick={generarPredicciones}>📊 Generar Predicciones (7 días)</button>
-          <button className="btn" onClick={optimizarHiperparametros} disabled={optimizando}>
-            {optimizando ? '⏳ Optimizando...' : '🎯 Optimizar Hiperparámetros'}
+          <button className="btn" onClick={optimizarHiperparametros} disabled={optimizando} style={{ border: '1px solid #cbd5e1' }}>
+            {optimizando ? '⏳ Optimizando...' : '3. 🎯 Optimizar Hiperparámetros'}
           </button>
-          <button className="btn" onClick={sincronizarClima}>🌤️ Sincronizar Clima</button>
+          <button className="btn" onClick={generarPredicciones} style={{ background: '#10b981', color: '#fff', fontWeight: 600, border: 'none' }}>
+            4. 📊 Generar Predicciones (7 días)
+          </button>
           {streaming && <button className="btn" onClick={detenerStream} style={{ background: '#e74c3c', color: '#fff', border: 'none' }}>⏹ Detener</button>}
         </div>
         {predResult && <p style={{ marginTop: '10px', color: predResult.includes('✅') ? '#27ae60' : '#e74c3c', fontWeight: 600 }}>{predResult}</p>}
@@ -852,7 +859,9 @@ export default function PrediccionesPage() {
                   </span>
                 </td>
                 <td style={{ color: (p.confianza_prediccion || 0) > 0.6 ? '#27ae60' : (p.confianza_prediccion || 0) > 0.4 ? '#f39c12' : '#e74c3c', fontWeight: 600 }}>
-                  {p.confianza_prediccion ? (p.confianza_prediccion * 100).toFixed(1) + '%' : '—'}
+                  {p.confianza_prediccion !== null && p.confianza_prediccion !== undefined
+                    ? Math.max(0, p.confianza_prediccion * 100).toFixed(1) + '%'
+                    : '—'}
                 </td>
               </tr>
             )}

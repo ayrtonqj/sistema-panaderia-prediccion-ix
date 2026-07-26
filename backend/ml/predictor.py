@@ -1,4 +1,4 @@
-﻿"""
+"""
 predictor.py â€” Genera predicciones de demanda usando el MEJOR modelo
 por producto segÃºn la comparaciÃ³n (best_model.json).
 Guarda resultados en fact_predicciones con:
@@ -237,9 +237,7 @@ async def generar_predicciones(n_dias: int = 7) -> dict:
 
         df_clima_futuro = pd.DataFrame(clima_futuro_rows)
 
-        db.query(models.FactPrediccion).filter(
-            models.FactPrediccion.fecha_proyectada >= hoy
-        ).delete(synchronize_session=False)
+        db.query(models.FactPrediccion).delete()
         db.commit()
 
         predicciones_guardadas = []
@@ -248,7 +246,7 @@ async def generar_predicciones(n_dias: int = 7) -> dict:
             if not modelo_existe(prod_id):
                 continue
 
-            for model, algoritmo, r2, es_mejor in modelos:
+            for model, algoritmo, r2, es_mejor in cargar_todos_modelos(prod_id):
                 try:
                     predicted_values = []
                     for dia_idx in range(n_dias):
@@ -263,11 +261,15 @@ async def generar_predicciones(n_dias: int = 7) -> dict:
                         fecha_pred = df_clima_futuro.iloc[dia_idx]["fecha"]
                         if isinstance(fecha_pred, pd.Timestamp):
                             fecha_pred = fecha_pred.date()
+                        confianza_norm = None
+                        if r2 is not None and not np.isnan(r2):
+                            confianza_norm = max(0.0, min(0.999, float(r2)))
+
                         db_pred = models.FactPrediccion(
                             producto_id=prod_id,
                             fecha_proyectada=fecha_pred,
                             demanda_estimada=pred,
-                            confianza_prediccion=r2,
+                            confianza_prediccion=confianza_norm,
                             algoritmo_utilizado=algoritmo,
                         )
                         db.add(db_pred)
@@ -276,7 +278,7 @@ async def generar_predicciones(n_dias: int = 7) -> dict:
                             "producto_nombre": prod_nombre,
                             "fecha_proyectada": str(fecha_pred),
                             "demanda_estimada": pred,
-                            "confianza_prediccion": r2,
+                            "confianza_prediccion": confianza_norm,
                             "algoritmo_utilizado": algoritmo,
                         })
                 except Exception as e:

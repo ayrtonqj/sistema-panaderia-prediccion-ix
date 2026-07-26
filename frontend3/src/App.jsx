@@ -19,11 +19,22 @@ import AnomaliasPage from './pages/AnomaliasPage'
 import PodiosPage from './pages/PodiosPage'
 import NotificacionesPage from './pages/NotificacionesPage'
 
+import DemoLoadingScreen from './components/DemoLoadingScreen'
 import SecurityPage from './pages/SecurityPage'
 import './App.css'
 
 function App() {
-  const { user, debeConfigurar2fa } = useAuth()
+  const {
+    user,
+    debeConfigurar2fa,
+    isDemoLoading,
+    demoElapsed,
+    demoAttempts,
+    demoError,
+    retryDemoLogin,
+    skipAutoLogin,
+  } = useAuth()
+
   const [currentPage, setCurrentPage] = useState(() => {
     const saved = localStorage.getItem('currentPage')
     return debeConfigurar2fa ? 'seguridad' : saved || 'dashboard'
@@ -76,6 +87,17 @@ function App() {
   }, [debeConfigurar2fa, currentPage])
 
   if (!user) {
+    if (isDemoLoading) {
+      return (
+        <DemoLoadingScreen
+          elapsed={demoElapsed}
+          attempts={demoAttempts}
+          error={demoError}
+          onRetry={retryDemoLogin}
+          onManualLogin={skipAutoLogin}
+        />
+      )
+    }
     return <LoginPage />
   }
 

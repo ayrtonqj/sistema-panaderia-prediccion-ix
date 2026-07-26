@@ -587,10 +587,10 @@ docker-compose up -d
 # - Backend (FastAPI) en :8000
 # - Frontend (React + nginx) en :80
 
-# 4. Cargar datos iniciales
-curl -X POST http://localhost:8000/datos/semilla
-curl -X POST http://localhost:8000/ml/entrenar
-curl -X POST "http://localhost:8000/predicciones/generar?n_dias=7"
+# 4. Cargar datos iniciales (usar curl.exe en Windows PowerShell)
+curl.exe -X POST http://localhost:8000/datos/semilla
+curl.exe -X POST http://localhost:8000/ml/entrenar
+curl.exe -X POST "http://localhost:8000/predicciones/generar?n_dias=7"
 ```
 
 ### Opcion 2: Desarrollo local (backend + frontend por separado)
@@ -628,34 +628,81 @@ docker-compose up -d
 
 ```bash
 # Cargar datos sinteticos (365 dias)
-curl -X POST http://localhost:8000/datos/semilla
+curl.exe -X POST http://localhost:8000/datos/semilla
 
 # Entrenar modelos
-curl -X POST http://localhost:8000/ml/entrenar
+curl.exe -X POST http://localhost:8000/ml/entrenar
 
 # Generar predicciones para 7 dias
-curl -X POST "http://localhost:8000/predicciones/generar?n_dias=7"
+curl.exe -X POST "http://localhost:8000/predicciones/generar?n_dias=7"
 
 # Sincronizar clima
-curl -X POST "http://localhost:8000/clima/sincronizar?dias=7"
+curl.exe -X POST "http://localhost:8000/clima/sincronizar?dias=7"
 ```
 
-### Simulación de Datos del Artículo de Tesis (OE6)
+### Simulación e Inicialización Completa de Datos del Artículo de Tesis (OE6)
 
-Si deseas recrear exactamente los datos calibrados del artículo científico (con un 23.7% de reducción física de mermas, ahorro mensual de ~S/ 850.00 en los últimos 90 días, significancia Diebold-Mariano y análisis de ablación), ejecuta los siguientes comandos desde la carpeta raíz:
+Para desplegar el sistema desde cero en una nueva PC o recrear exactamente los datos calibrados del artículo científico (con un 24.9% de reducción física de mermas, ahorro mensual de ~S/ 850.00 en los últimos 90 días, significancia Diebold-Mariano y análisis de ablación), sigue este flujo secuencial en la terminal:
+
+> [!NOTE]
+> **Orden de ejecución y prevención de duplicidad:**
+> * **Compilación Docker:** Se recomienda usar `docker-compose up -d --build` para asegurar una construcción limpia del stack.
+> * **Requisito previo:** `POST /datos/semilla` debe haberse ejecutado al menos una vez para inicializar el catálogo de productos, insumos, proveedores y recetas en la BD vacía.
+> * **No hay duplicación:** `seed_articulo.py` **no duplica datos** porque limpia y elimina automáticamente ventas, mermas, clima u órdenes previas antes de insertar la serie calibrada de 360 días.
+> * **Nota PowerShell:** En Windows PowerShell, usa `curl.exe` en lugar de `curl` para evitar que PowerShell invoque el alias interno `Invoke-WebRequest`.
 
 ```bash
-# 1. Ejecutar el seeder del artículo (inicializa ventas, clima, mermas e historial n8n en la BD)
+# 1. Clonar el repositorio y entrar a la carpeta
+git clone <URL_DEL_REPOSITORIO>
+cd sistema-panaderia-prediccion-ix
+
+# 2. Configurar variables de entorno (copiar y editar si deseas VITE_DEMO_MODE=true)
+cp .env.example .env
+
+# 3. Levantar todos los servicios con Docker (compilación limpia)
+docker-compose up -d --build
+
+# 4. Cargar catálogo base de productos e insumos (necesario si la BD es nueva)
+curl.exe -X POST http://localhost:8000/datos/semilla
+
+# 5. Ejecutar seeder del artículo (Genera los 360 días con patrones realistas, mermas OE6 y 168 órdenes n8n)
 docker exec -it backend_tesis python ml/seed_articulo.py
 
-# 2. Generar metadatos de los modelos entrenados (RMSE, MAE, R²)
+# 6. Entrenar modelos ML y generar metadatos de evaluación (R², RMSE, MAE)
+docker exec -it backend_tesis python ml/trainer.py
 docker exec -it backend_tesis python ml/generate_models_meta.py
 
-# 3. Realizar un experimento de control de Análisis de Ablación de clima
+# 7. Generar y guardar predicciones a 7 días en la BD
+curl.exe -X POST "http://localhost:8000/predicciones/generar?n_dias=7"
+
+# 8. (Opcional) Realizar experimento de control de Análisis de Ablación de clima
 docker exec -it backend_tesis python scratch/ablation_study.py
 ```
 
-*Nota: Si estás corriendo en un entorno de desarrollo local sin Docker, puedes ejecutar los mismos scripts activando el entorno virtual de la carpeta `backend`: `venv\Scripts\python.exe ml/seed_articulo.py`, `venv\Scripts\python.exe ml/generate_models_meta.py` y `venv\Scripts\python.exe scratch/ablation_study.py`.*
+*Nota: Si estás corriendo en un entorno de desarrollo local sin Docker, puedes ejecutar los mismos scripts activando el entorno virtual de la carpeta `backend`: `venv\Scripts\python.exe ml/seed_articulo.py`, `venv\Scripts\python.exe ml/trainer.py`, `venv\Scripts\python.exe ml/generate_models_meta.py` y `venv\Scripts\python.exe scratch/ablation_study.py`.*
+
+### Configuración del Modo Demo (Despliegue Público / Render)
+
+Para desplegar el sistema en entornos de demostración pública (ej. Render, Vercel, Netlify) sin requerir que los visitantes ingresen credenciales manualmente, puedes activar el **Modo Demo**:
+
+Configura las siguientes variables de entorno en la app de Frontend:
+
+```env
+# Activa el inicio de sesión automático
+VITE_DEMO_MODE=true
+
+# URL de la API backend desplegada en Render (ejemplo)
+VITE_API_URL=https://sistema-panaderia-backend.onrender.com
+
+# Opcional: Credenciales de auto-login (por defecto usa el usuario 'admin')
+VITE_DEMO_USERNAME=admin
+VITE_DEMO_PASSWORD=admin
+```
+
+> **Comportamiento durante el despertar del servidor (Render Cold Start):**
+> * Al estar activo `VITE_DEMO_MODE=true`, si el servidor backend de Render se encuentra en modo reposo (free tier cold start), la aplicación mostrará automáticamente una **Pantalla de Carga de Modo Demo**.
+> * Esta pantalla incluye un contador en tiempo real, número de intentos de reconexión y explicación clara para el visitante de que el backend se está activando (pudiendo tomar entre 1 y 2 minutos).
+> * Una vez que el backend responde, se autentica automáticamente como Administrador e ingresa al Dashboard.
 
 ---
 

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 
 const LOGO_SVG = (
@@ -82,22 +82,20 @@ const ADMIN_SECTION = {
 
 export default function Sidebar({ currentPage, setCurrentPage, darkMode, setDarkMode, collapsed, onToggle, className }) {
   const { user, logout } = useAuth()
-  const [hoveredSection, setHoveredSection] = useState(null)
-  const hoverTimerRef = useRef(null)
-
-  const handleSectionEnter = (title) => {
-    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
-    setHoveredSection(title)
-  }
-
-  const handleSectionLeave = () => {
-    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
-    hoverTimerRef.current = setTimeout(() => {
-      setHoveredSection(null)
-    }, 300)
-  }
-
   const allSections = [...MENU_SECTIONS, ADMIN_SECTION]
+
+  const [openSections, setOpenSections] = useState(() => {
+    const initial = {}
+    allSections.forEach(s => { initial[s.title] = true })
+    return initial
+  })
+
+  const toggleSection = (title) => {
+    setOpenSections(prev => ({
+      ...prev,
+      [title]: !prev[title]
+    }))
+  }
 
   return (
     <div className={className || `sidebar${collapsed ? ' collapsed' : ''}`}>
@@ -108,16 +106,14 @@ export default function Sidebar({ currentPage, setCurrentPage, darkMode, setDark
       {allSections.map(section => {
         const visibleItems = section.items.filter(m => m.roles.includes(user.rol))
         if (visibleItems.length === 0) return null
-        const isExpanded = collapsed || hoveredSection === section.title
+        const isExpanded = collapsed || openSections[section.title] !== false
         return (
           <div
             className="menu-section"
             key={section.title}
-            onMouseEnter={() => handleSectionEnter(section.title)}
-            onMouseLeave={handleSectionLeave}
           >
             {!collapsed && (
-              <h3 className="section-header">
+              <h3 className="section-header" onClick={() => toggleSection(section.title)}>
                 <span className={`section-chevron${isExpanded ? ' open' : ''}`}>▸</span>
                 {section.title}
               </h3>

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 
 export default function LoginPage() {
-  const { login, requires2fa, login2FA, recover2FA, recoverVerify2FA, qrRecovery, setQrRecovery } = useAuth()
+  const { login, requires2fa, login2FA, recover2FA, recoverVerify2FA, qrRecovery, setQrRecovery, isDemoMode, retryDemoLogin } = useAuth()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -242,6 +242,28 @@ export default function LoginPage() {
       >
         {loading ? 'Verificando...' : 'Iniciar Sesión'}
       </button>
+
+      {isDemoMode && (
+        <button
+          type="button"
+          onClick={retryDemoLogin}
+          style={{
+            marginTop: '12px',
+            width: '100%',
+            padding: '12px',
+            background: 'rgba(99, 102, 241, 0.1)',
+            border: '1px solid rgba(99, 102, 241, 0.3)',
+            color: '#6366f1',
+            borderRadius: '12px',
+            fontSize: '0.9rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+          }}
+        >
+          ⚡ Iniciar en Modo Demo (Auto-login)
+        </button>
+      )}
     </form>
   )
 

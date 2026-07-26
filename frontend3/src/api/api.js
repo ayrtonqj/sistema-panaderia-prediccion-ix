@@ -4,6 +4,7 @@ const TIMEOUTS = {
   'POST:/ml/entrenar': 300000,
   'POST:/ml/comparar': 300000,
   'POST:/datos/semilla': 120000,
+  'POST:/auth/login': 120000,
 }
 
 async function apiFetch(path, options = {}) {

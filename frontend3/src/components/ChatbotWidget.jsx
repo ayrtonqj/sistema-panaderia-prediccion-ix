@@ -85,8 +85,9 @@ export default function ChatbotWidget() {
     setMessages(prev => [...prev, { from: 'user', text: msg }])
     setLoading(true)
     try {
-      const data = await api.post('/chatbot/pregunta', { pregunta: msg })
-      setMessages(prev => [...prev, { from: 'bot', text: data.mensaje }])
+      const data = await api.post('/chatbot/mensaje', { mensaje: msg, pregunta: msg })
+      const botText = data.respuesta || data.mensaje || 'Respuesta no disponible'
+      setMessages(prev => [...prev, { from: 'bot', text: botText }])
     } catch {
       setMessages(prev => [...prev, { from: 'bot', text: '⚠️ Error de conexión. Verifica que el backend esté funcionando.' }])
     } finally {

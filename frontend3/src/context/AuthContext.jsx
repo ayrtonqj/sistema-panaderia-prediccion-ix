@@ -1,5 +1,9 @@
-import { createContext, useContext, useState } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { api } from '../api/api'
+
+const IS_DEMO_MODE = import.meta.env.VITE_DEMO_MODE === 'true'
+const DEMO_USERNAME = import.meta.env.VITE_DEMO_USERNAME || 'admin'
+const DEMO_PASSWORD = import.meta.env.VITE_DEMO_PASSWORD || 'admin'
 
 const AuthContext = createContext(null)
 
@@ -15,6 +19,13 @@ export function AuthProvider({ children }) {
     } catch { return null }
   })
 
+  // Demo Mode & Warmup states
+  const [isDemoLoading, setIsDemoLoading] = useState(false)
+  const [demoElapsed, setDemoElapsed] = useState(0)
+  const [demoAttempts, setDemoAttempts] = useState(0)
+  const [demoError, setDemoError] = useState(null)
+  const [cancelAutoLogin, setCancelAutoLogin] = useState(false)
+
   // 2FA states
   const [requires2fa, setRequires2fa] = useState(false)
   const [sessionToken, setSessionToken] = useState(null)
@@ -22,6 +33,78 @@ export function AuthProvider({ children }) {
   const [debeConfigurar2fa, setDebeConfigurar2fa] = useState(false)
   const [qrData, setQrData] = useState(null) // { qr_base64, secret, uri }
   const [qrRecovery, setQrRecovery] = useState(null) // base64 QR for repairing corrupted 2FA
+
+  // Auto-login loop when IS_DEMO_MODE is active and user is not logged in
+  useEffect(() => {
+    if (IS_DEMO_MODE && !user && !cancelAutoLogin) {
+      setIsDemoLoading(true)
+      let isMounted = true
+      let timerId = null
+
+      setDemoElapsed(0)
+      setDemoAttempts(0)
+      setDemoError(null)
+
+      const startTime = Date.now()
+      timerId = setInterval(() => {
+        if (isMounted) {
+          setDemoElapsed(Math.floor((Date.now() - startTime) / 1000))
+        }
+      }, 1000)
+
+      const runAutoLogin = async () => {
+        let attempts = 0
+        while (isMounted && !user) {
+          attempts++
+          if (isMounted) setDemoAttempts(attempts)
+
+          try {
+            const res = await api.post('/auth/login', {
+              username: DEMO_USERNAME,
+              password: DEMO_PASSWORD,
+            })
+
+            if (res && res.username) {
+              const u = { username: res.username, rol: res.rol, vendedor_id: res.vendedor_id }
+              if (isMounted) {
+                setUser(u)
+                localStorage.setItem('pv_user', JSON.stringify(u))
+                setIsDemoLoading(false)
+              }
+              break
+            }
+          } catch (err) {
+            if (!isMounted) break
+            const isNetworkErr = !err.response || err.name === 'AbortError' || err.message?.includes('Fetch') || err.message?.includes('HTTP 502') || err.message?.includes('HTTP 503') || err.message?.includes('HTTP 504')
+            const msg = isNetworkErr
+              ? 'El servidor backend se está despertando en Render...'
+              : (err?.response?.data?.detail || 'Reintentando conexión con la API...')
+            setDemoError(msg)
+            await new Promise((resolve) => setTimeout(resolve, 3000))
+          }
+        }
+      }
+
+      runAutoLogin()
+
+      return () => {
+        isMounted = false
+        if (timerId) clearInterval(timerId)
+      }
+    }
+  }, [user, cancelAutoLogin])
+
+  const retryDemoLogin = useCallback(() => {
+    setCancelAutoLogin(false)
+    setDemoElapsed(0)
+    setDemoAttempts(0)
+    setDemoError(null)
+  }, [])
+
+  const skipAutoLogin = useCallback(() => {
+    setCancelAutoLogin(true)
+    setIsDemoLoading(false)
+  }, [])
 
   async function login(username, password) {
     try {
@@ -109,7 +192,6 @@ export function AuthProvider({ children }) {
       if (msg.includes('Demasiados intentos')) {
         setDebeConfigurar2fa(false)
         setQrData(null)
-        // Redirigir al login
         logout()
         return { expired: true, msg }
       }
@@ -178,6 +260,10 @@ export function AuthProvider({ children }) {
     setUser(null)
     clear2FAState()
     localStorage.removeItem('pv_user')
+    if (IS_DEMO_MODE) {
+      setCancelAutoLogin(true)
+      setIsDemoLoading(false)
+    }
   }
 
   return (
@@ -185,6 +271,14 @@ export function AuthProvider({ children }) {
       user, login, logout,
       requires2fa, sessionToken, pendingUsername, debeConfigurar2fa, qrData, qrRecovery,
       login2FA, setup2FA, verifySetup2FA, disable2FA, recover2FA, recoverVerify2FA, clear2FAState, setDebeConfigurar2fa, setQrRecovery,
+      // Demo Mode exports
+      isDemoMode: IS_DEMO_MODE,
+      isDemoLoading,
+      demoElapsed,
+      demoAttempts,
+      demoError,
+      retryDemoLogin,
+      skipAutoLogin,
     }}>
       {children}
     </AuthContext.Provider>
