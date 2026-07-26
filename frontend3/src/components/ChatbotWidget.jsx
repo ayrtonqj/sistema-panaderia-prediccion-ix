@@ -21,36 +21,53 @@ export default function ChatbotWidget() {
   function startListening() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) {
-      alert('Tu navegador no soporta reconocimiento de voz. Prueba con Chrome o Edge.')
+      alert('Tu navegador no soporta reconocimiento de voz. Prueba desde Google Chrome o Microsoft Edge.')
       return
     }
     if (listening) {
       stopListening()
       return
     }
-    const recognition = new SpeechRecognition()
-    recognition.lang = 'es-PE'
-    recognition.interimResults = false
-    recognition.continuous = false
-    recognition.maxAlternatives = 1
 
-    recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript
-      setInput(transcript)
-      if (inputRef.current) inputRef.current.value = transcript
-    }
+    try {
+      const recognition = new SpeechRecognition()
+      recognition.lang = 'es-PE'
+      recognition.interimResults = false
+      recognition.continuous = false
+      recognition.maxAlternatives = 1
 
-    recognition.onerror = () => {
+      recognition.onstart = () => {
+        setListening(true)
+      }
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0]?.transcript || ''
+        if (transcript.trim()) {
+          setInput(transcript)
+          if (inputRef.current) inputRef.current.value = transcript
+          // Enviar automáticamente el mensaje de voz capturado
+          sendMessageWithText(transcript, true)
+        }
+      }
+
+      recognition.onerror = (e) => {
+        console.warn('Error en reconocimiento de voz:', e.error)
+        setListening(false)
+        if (e.error === 'not-allowed') {
+          alert('Por favor otorga permiso al navegador para acceder al micrófono.')
+        }
+      }
+
+      recognition.onend = () => {
+        setListening(false)
+      }
+
+      recognition.start()
+      recognitionRef.current = recognition
+    } catch (err) {
+      console.error(err)
       setListening(false)
     }
-
-    recognition.onend = () => {
-      setListening(false)
-    }
-
-    recognition.start()
-    setListening(true)
-    recognitionRef.current = recognition
   }
 
   function stopListening() {
@@ -62,23 +79,33 @@ export default function ChatbotWidget() {
   }
 
   function hablar(texto) {
+    if (!('speechSynthesis' in window)) {
+      alert('Tu navegador no soporta síntesis de voz.')
+      return
+    }
     if (speaking) {
       speechSynthesis.cancel()
       setSpeaking(false)
       return
     }
-    const cleanText = texto.replace(/[#*•⚠️✅📊📉📦🍞🛒🔮💡📖🤖]/g, '').trim()
+    speechSynthesis.cancel()
+    const cleanText = texto
+      .replace(/[*#•⚠️✅📊📉📦🍞🛒🔮💡📖🤖➔🏷️👥💰🏆]/g, '')
+      .replace(/https?:\/\/\S+/g, '')
+      .trim()
+    if (!cleanText) return
+
     const utterance = new SpeechSynthesisUtterance(cleanText)
     utterance.lang = 'es-PE'
-    utterance.rate = 0.9
+    utterance.rate = 0.95
     utterance.onend = () => setSpeaking(false)
     utterance.onerror = () => setSpeaking(false)
     setSpeaking(true)
     speechSynthesis.speak(utterance)
   }
 
-  async function sendMessage() {
-    const msg = input.trim()
+  async function sendMessageWithText(textToSend = null, autoSpeak = false) {
+    const msg = (textToSend !== null ? textToSend : input).trim()
     if (!msg) return
     setInput('')
     if (inputRef.current) inputRef.current.value = ''
@@ -88,11 +115,18 @@ export default function ChatbotWidget() {
       const data = await api.post('/chatbot/mensaje', { mensaje: msg, pregunta: msg })
       const botText = data.respuesta || data.mensaje || 'Respuesta no disponible'
       setMessages(prev => [...prev, { from: 'bot', text: botText }])
+      if (autoSpeak) {
+        hablar(botText)
+      }
     } catch {
       setMessages(prev => [...prev, { from: 'bot', text: '⚠️ Error de conexión. Verifica que el backend esté funcionando.' }])
     } finally {
       setLoading(false)
     }
+  }
+
+  function sendMessage() {
+    sendMessageWithText(null, false)
   }
 
   function handleKeyDown(e) {
@@ -122,7 +156,7 @@ export default function ChatbotWidget() {
               <button
                 onClick={() => hablar(messages[messages.length - 1]?.text || '')}
                 className="chat-header-btn"
-                title={speaking ? 'Detener' : 'Leer respuesta'}
+                title={speaking ? 'Detener lectura' : 'Escuchar última respuesta'}
                 style={{ fontSize: '14px', cursor: 'pointer', background: 'none', border: 'none', color: 'white', padding: '0' }}
               >
                 {speaking ? '🔊' : '🔈'}
@@ -150,14 +184,16 @@ export default function ChatbotWidget() {
                 )}
               </div>
             ))}
-            {loading && <div className="chat-message bot">🤖 Escribiendo...</div>}
+            {loading && <div className="chat-message bot">🤖 Procesando consulta...</div>}
+            {listening && <div className="chat-message bot" style={{ color: '#e53e3e', fontWeight: 'bold' }}>🔴 Escuchando voz... habla ahora</div>}
             <div ref={messagesEndRef} />
           </div>
           <div className="chat-input">
             <button
               onClick={startListening}
               className={`chat-mic-btn ${listening ? 'chat-mic-active' : ''}`}
-              title={listening ? 'Detener grabación' : 'Hablar'}
+              title={listening ? 'Detener grabación' : 'Hablar por micrófono'}
+              style={listening ? { background: '#ef4444', color: '#fff', animation: 'pulse 1.2s infinite' } : {}}
             >
               🎤
             </button>
@@ -166,7 +202,7 @@ export default function ChatbotWidget() {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Escribe o usa el micrófono..."
+              placeholder={listening ? 'Escuchando tu voz...' : 'Escribe o usa el micrófono...'}
               disabled={loading}
             />
             <button onClick={sendMessage} disabled={loading || !input.trim()}>
