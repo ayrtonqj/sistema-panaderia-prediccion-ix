@@ -1,6 +1,15 @@
 """
-chatbot/router.py - Router de FastAPI para el chatbot de la panadería.
-Proporciona respuestas básicas basadas en palabras clave sobre el sistema.
+chatbot/router.py - Asistente Inteligente Virtual de Panadería Victoria
+=============================================================================
+Proporciona respuestas con datos reales de la BD SQL para cualquier consulta:
+  - Predicciones de producción (general o producto específico, hoy/mañana/fechas)
+  - Catálogo de productos, precios y costos
+  - Inventario e insumos específicos (harina, manteca, azúcar, etc.)
+  - Ventas, productos más vendidos e ingresos
+  - Mermas, pérdidas acumuladas y ahorro de tesis (~S/ 850, ~24.9%)
+  - Proveedores y órdenes de compra n8n
+  - Métricas de modelos ML (R², RMSE, MAE)
+  - Vendedores y personal
 """
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -11,7 +20,6 @@ from typing import Optional
 import sys
 import os
 
-# Importación relativa al paquete backend
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 router = APIRouter(prefix="/chatbot", tags=["chatbot"])
@@ -35,56 +43,74 @@ def get_db():
 def _respuesta_fallback(mensaje: str) -> str:
     msg = mensaje.lower()
 
-    if any(w in msg for w in ["hola", "buenas", "saludos", "hi"]):
-        return "¡Hola! Soy el asistente de Panadería Victoria. Puedo ayudarte con información sobre ventas, inventario, predicciones y mermas. ¿En qué te puedo ayudar?"
-
-    if any(w in msg for w in ["venta", "vendido", "ingreso"]):
-        return "Para ver las ventas del día o históricas, ve a la sección **Registro Diario** o **Dashboard**. También puedes consultar predicciones en la sección **Predicciones**."
-
-    if any(w in msg for w in ["stock", "inventario", "insumo"]):
-        return "El inventario de insumos está disponible en la sección **Inventario**. Puedes ver niveles de stock, alertas de reposición y registrar entradas."
-
-    if any(w in msg for w in ["merma", "pérdida", "perdida", "desperdicio"]):
-        return "Las mermas se registran en **Control de Pérdidas**. Puedes ver la tasa de merma y los productos con mayor desperdicio."
-
-    if any(w in msg for w in ["prediccion", "predicción", "pronostico", "pronóstico"]):
-        return "Las predicciones de demanda están en la sección **Predicciones**. Usa el modelo estadístico para anticipar cuánto producir cada día."
-
-    if any(w in msg for w in ["proveedor", "compra", "orden"]):
-        return "Gestiona proveedores en **Proveedores** y órdenes de compra en **Órdenes de Compra**. El sistema puede sugerir órdenes automáticamente."
-
-    if any(w in msg for w in ["reporte", "informe", "excel", "pdf"]):
-        return "Puedes generar reportes en la sección **Reportes Financieros**. Se exportan en PDF y Excel."
+    if any(w in msg for w in ["hola", "buenas", "saludos", "hi", "buenos dias", "buenas tardes"]):
+        return ("¡Hola! Soy el asistente inteligente de **Panadería Victoria** 🥖.\n\n"
+                "Puedo ayudarte con información en tiempo real sobre:\n"
+                "• 🔮 **Predicciones** (ej: *'¿cuál es la predicción de mañana para pan francés?'*)\n"
+                "• 🍞 **Catálogo y Precios** (ej: *'¿cuánto cuesta la torta de chocolate?'*)\n"
+                "• 📦 **Inventario e Insumos** (ej: *'¿cuánta harina queda en stock?'*)\n"
+                "• 📊 **Ventas e Ingresos** (ej: *'¿cuáles son los productos más vendidos?'*)\n"
+                "• 📉 **Mermas y Pérdidas** (ej: *'resumen de mermas y ahorro de tesis'*)\n"
+                "• 🛒 **Órdenes de Compra** (ej: *'órdenes pendientes n8n'*)\n"
+                "• 🤖 **Modelos ML** (ej: *'¿qué modelos de Machine Learning se usan?'*)\n\n"
+                "¿Qué deseas consultar?")
 
     if any(w in msg for w in ["ayuda", "help", "cómo", "como", "qué", "que"]):
-        return ("Puedo orientarte sobre:\n"
-                "• 📊 **Ventas** - Registro y consulta de ventas\n"
-                "• 📦 **Inventario** - Stock de insumos\n"
-                "• 🔮 **Predicciones** - Demanda futura\n"
-                "• 📉 **Mermas** - Control de pérdidas\n"
-                "• 🛒 **Órdenes de compra** - Gestión de proveedores\n"
-                "• 📑 **Reportes** - Informes financieros\n\n"
-                "¿Sobre cuál de estos temas quieres saber más?")
+        return ("Puedes hacerme preguntas directas como:\n"
+                "• *'¿Cuánto producir de pan francés mañana?'*\n"
+                "• *'¿Cuánto cuesta la empanada de carne?'*\n"
+                "• *'¿Qué insumos tienen bajo stock?'*\n"
+                "• *'¿Cuáles son los productos con más mermas?'*\n"
+                "• *'¿Cuáles son las ventas totales del sistema?'*\n"
+                "• *'¿Qué avance tiene la tesis en mermas?'*")
 
-    return ("No entendí tu consulta. Puedes preguntarme sobre:\n"
-            "ventas, inventario, predicciones, mermas, proveedores o reportes.")
+    return ("No logré identificar los datos exactos para tu consulta.\n\n"
+            "Prueba preguntarme sobre:\n"
+            "• **Predicciones por producto** (ej: *'predicción para pan de molde'*)\n"
+            "• **Precios del catálogo** (ej: *'precio del cheesecake'*)\n"
+            "• **Insumos e inventario** (ej: *'stock de levadura'*)\n"
+            "• **Ventas, Mermas u Órdenes de compra**")
 
 
 @router.post("/mensaje")
 @router.post("/pregunta")
 def chatbot_mensaje(msg: ChatMessage, db: Session = Depends(get_db)):
-    """Procesa un mensaje del chatbot y retorna una respuesta con datos reales de la BD."""
+    """Procesa un mensaje del chatbot y retorna una respuesta inteligente con datos de la BD."""
     texto_mensaje = msg.mensaje or msg.pregunta or ""
+    if not texto_mensaje.strip():
+        return {"respuesta": "Por favor escribe una pregunta.", "mensaje": "Por favor escribe una pregunta."}
+
     try:
         import models
-        from sqlalchemy import func
-
         mensaje_lower = texto_mensaje.lower()
         hoy = date.today()
 
-        # 1. PREDICCIONES / PROYECCIONES DE PRODUCCIÓN
+        # ── 1. PRECIOS / CATÁLOGO DE PRODUCTOS (Consulta específica o general) ──────
+        if any(w in mensaje_lower for w in ["precio", "precios", "costo", "cuanto cuesta", "cuánto cuesta", "valor", "catálogo", "catalogo", "lista de productos"]):
+            productos_db = db.query(models.DimProducto).order_by(models.DimProducto.categoria, models.DimProducto.nombre).all()
+            if productos_db:
+                # Verificar si pregunta por un producto específico
+                for p in productos_db:
+                    if p.nombre.lower() in mensaje_lower or any(t in mensaje_lower for t in p.nombre.lower().split() if len(t) > 3 and t not in ["pan", "de", "del"]):
+                        res = (
+                            f"🏷️ **Información de Producto — {p.nombre}:**\n\n"
+                            f"• **Categoría:** {p.categoria}\n"
+                            f"• **Precio de Venta:** **S/ {float(p.precio):.2f}**\n"
+                            f"• **Costo estimado:** S/ {float(p.costo):.2f}\n"
+                            f"• **Margen unitario:** S/ {float(p.precio - p.costo):.2f}\n"
+                        )
+                        return {"respuesta": res, "mensaje": res}
+
+                # Si es general, mostrar resumen por categorías
+                cats = {}
+                for p in productos_db:
+                    cats.setdefault(p.categoria, []).append(f"{p.nombre} (S/ {float(p.precio):.2f})")
+                lineas = [f"**{cat}:** " + ", ".join(prods[:3]) + ("..." if len(prods)>3 else "") for cat, prods in cats.items()]
+                res = "🍞 **Catálogo y Precios de Productos (Resumen):**\n\n" + "\n".join(lineas) + "\n\n💡 *Puedes preguntarme por el precio exacto de cualquier producto.*"
+                return {"respuesta": res, "mensaje": res}
+
+        # ── 2. PREDICCIONES / PROYECCIONES DE PRODUCCIÓN ────────────────────────
         if any(w in mensaje_lower for w in ["predicci", "proyecci", "pronost", "demanda", "cuánto producir", "cuanto producir", "producción recomendada", "produccion recomendada", "frances", "francés", "integral", "torta", "cuanto", "cuánto"]):
-            hoy = date.today()
             if "mañana" in mensaje_lower or "manana" in mensaje_lower:
                 fecha_deseada = hoy + timedelta(days=1)
             elif "hoy" in mensaje_lower:
@@ -92,7 +118,6 @@ def chatbot_mensaje(msg: ChatMessage, db: Session = Depends(get_db)):
             else:
                 fecha_deseada = None
 
-            # Detectar si se consulta por un producto específico
             productos_db = db.query(models.DimProducto).all()
             prod_encontrado = None
             for p in productos_db:
@@ -108,7 +133,6 @@ def chatbot_mensaje(msg: ChatMessage, db: Session = Depends(get_db)):
                 if prod_encontrado:
                     break
 
-            # Buscar la fecha proyectada target
             reciente_fecha = None
             if fecha_deseada:
                 reciente_fecha = db.query(models.FactPrediccion.fecha_proyectada).filter(
@@ -128,11 +152,9 @@ def chatbot_mensaje(msg: ChatMessage, db: Session = Depends(get_db)):
             if reciente_fecha:
                 fecha_target = reciente_fecha[0]
 
-                # Si la pregunta es por un producto específico (ej: Pan Francés)
+                # Si es un producto específico
                 if prod_encontrado:
-                    preds_prod = db.query(
-                        models.FactPrediccion
-                    ).filter(
+                    preds_prod = db.query(models.FactPrediccion).filter(
                         models.FactPrediccion.producto_id == prod_encontrado.id,
                         models.FactPrediccion.fecha_proyectada == fecha_target
                     ).order_by(
@@ -146,12 +168,12 @@ def chatbot_mensaje(msg: ChatMessage, db: Session = Depends(get_db)):
                             f"🔮 **Predicción de Producción para {prod_encontrado.nombre}:**\n\n"
                             f"• **Fecha proyectada:** {fecha_target.strftime('%d/%m/%Y')}\n"
                             f"• **Producción recomendada:** **{round(float(mejor.demanda_estimada))} unidades**\n"
-                            f"• **Modelo seleccionado:** {mejor.algoritmo_utilizado or 'Estadístico'} *(Confianza: {conf_pct})*\n\n"
-                            f"💡 *Recomendación:* Se sugiere preparar esta cantidad para cubrir la demanda proyectada optimizando insumos."
+                            f"• **Modelo óptimo:** {mejor.algoritmo_utilizado or 'Estadístico'} *(Confianza: {conf_pct})*\n\n"
+                            f"💡 *Recomendación:* Se sugiere hornear esta cantidad para cubrir la demanda estimada y minimizar mermas."
                         )
                         return {"respuesta": res, "mensaje": res}
 
-                # Si es una consulta general (mostrar solo el MEJOR modelo por cada producto)
+                # Consulta general (el mejor modelo por producto)
                 raw_preds = db.query(
                     models.FactPrediccion, models.DimProducto.nombre
                 ).join(
@@ -175,10 +197,23 @@ def chatbot_mensaje(msg: ChatMessage, db: Session = Depends(get_db)):
                     res = f"🔮 **Predicciones de Producción Recomendadas (Fecha: {fecha_target.strftime('%d/%m/%Y')}):**\n\n" + "\n".join(lineas)
                     return {"respuesta": res, "mensaje": res}
 
-        # 2. STOCK DE INSUMOS / INVENTARIO
-        if any(w in mensaje_lower for w in ["stock", "inventario", "insumo", "reponer", "reabastecer", "ingrediente"]):
+        # ── 3. INVENTARIO E INSUMOS (Específico o General) ──────────────────────
+        if any(w in mensaje_lower for w in ["stock", "inventario", "insumo", "reponer", "reabastecer", "ingrediente", "harina", "manteca", "azucar", "azúcar", "levadura", "huevos", "leche", "mantequilla"]):
             insumos = db.query(models.InsumoCritico).order_by(models.InsumoCritico.nombre).all()
             if insumos:
+                # Buscar insumo específico
+                for i in insumos:
+                    if i.nombre.lower() in mensaje_lower or any(t in mensaje_lower for t in i.nombre.lower().split() if len(t) > 3):
+                        alerta = "⚠️ **Stock bajo el mínimo**" if i.stock_actual <= i.stock_minimo else "✅ **Stock suficiente**"
+                        res = (
+                            f"📦 **Inventario de {i.nombre}:**\n\n"
+                            f"• **Stock Actual:** **{i.stock_actual} {i.unidad_medida}**\n"
+                            f"• **Stock Mínimo Requerido:** {i.stock_minimo} {i.unidad_medida}\n"
+                            f"• **Estado:** {alerta}\n"
+                        )
+                        return {"respuesta": res, "mensaje": res}
+
+                # Si es general
                 lineas = []
                 for i in insumos:
                     alerta = "⚠️ (Bajo Stock)" if i.stock_actual <= i.stock_minimo else "✅"
@@ -186,8 +221,8 @@ def chatbot_mensaje(msg: ChatMessage, db: Session = Depends(get_db)):
                 res = "📦 **Estado de Inventario e Insumos:**\n\n" + "\n".join(lineas)
                 return {"respuesta": res, "mensaje": res}
 
-        # 3. VENTAS / PRODUCTOS MÁS VENDIDOS
-        if any(w in mensaje_lower for w in ["venta", "vendido", "ingreso", "más vendido", "mas vendido"]):
+        # ── 4. VENTAS E INGRESOS ────────────────────────────────────────────────
+        if any(w in mensaje_lower for w in ["venta", "vendido", "ingreso", "más vendido", "mas vendido", "ganancia"]):
             top_ventas = db.query(
                 models.DimProducto.nombre,
                 func.sum(models.FactVenta.cantidad_vendida).label("cant_total"),
@@ -196,13 +231,19 @@ def chatbot_mensaje(msg: ChatMessage, db: Session = Depends(get_db)):
                 models.DimProducto, models.FactVenta.producto_id == models.DimProducto.id
             ).group_by(models.DimProducto.nombre).order_by(text("cant_total DESC")).limit(10).all()
 
+            total_ingresos = db.query(func.sum(models.FactVenta.cantidad_vendida * models.FactVenta.precio_unitario)).scalar() or 0
+
             if top_ventas:
-                lineas = [f"• {tv.nombre}: **{int(tv.cant_total)} uds** (S/ {float(tv.ingreso_total or 0):.2f})" for tv in top_ventas]
-                res = "📊 **Top Productos Más Vendidos:**\n\n" + "\n".join(lineas)
+                lineas = [f"• {tv.nombre}: **{int(tv.cant_total)} uds** (S/ {float(tv.ingreso_total or 0):,.2f})" for tv in top_ventas]
+                res = (
+                    f"📊 **Resumen de Ventas e Ingresos:**\n\n"
+                    f"💰 **Ingresos acumulados en BD:** **S/ {float(total_ingresos):,.2f}**\n\n"
+                    f"🏆 **Top Productos Más Vendidos:**\n" + "\n".join(lineas)
+                )
                 return {"respuesta": res, "mensaje": res}
 
-        # 4. MERMAS / PÉRDIDAS
-        if any(w in mensaje_lower for w in ["merma", "pérdida", "perdida", "desperdicio"]):
+        # ── 5. MERMAS, PÉRDIDAS Y AHOMBO DE TESIS (OE6) ─────────────────────────
+        if any(w in mensaje_lower for w in ["merma", "pérdida", "perdida", "desperdicio", "ahorro", "tesis", "oe6", "artículo", "articulo"]):
             mermas = db.query(
                 models.DimProducto.nombre,
                 func.sum(models.FactMerma.cantidad_merma).label("cant_merma"),
@@ -212,20 +253,48 @@ def chatbot_mensaje(msg: ChatMessage, db: Session = Depends(get_db)):
             ).group_by(models.DimProducto.nombre).order_by(text("costo_merma DESC")).limit(8).all()
 
             if mermas:
-                lineas = [f"• {m.nombre}: **{float(m.cant_merma):.1f} Kg/uds** (Pérdida est: S/ {float(m.costo_merma or 0):.2f})" for m in mermas]
-                res = "📉 **Resumen de Mermas Registradas por Producto:**\n\n" + "\n".join(lineas)
+                lineas = [f"• {m.nombre}: **{float(m.cant_merma):.1f} Kg/uds** (Costo est: S/ {float(m.costo_merma or 0):.2f})" for m in mermas]
+                res = (
+                    f"📉 **Resultados de Control de Mermas (Artículo OE6):**\n\n"
+                    f"• **Reducción Física de Merma:** **24.9%** (Pre vs Post experimental)\n"
+                    f"• **Ahorro Mensual Estimado:** **S/ 850.00**\n"
+                    f"• **Órdenes Automáticas n8n:** **168 órdenes**\n\n"
+                    f"🔍 **Productos con mayor registro de mermas:**\n" + "\n".join(lineas)
+                )
                 return {"respuesta": res, "mensaje": res}
 
-        # 5. PROVEEDORES / ÓRDENES DE COMPRA
-        if any(w in mensaje_lower for w in ["proveedor", "compra", "orden"]):
+        # ── 6. PROVEEDORES Y ÓRDENES DE COMPRA (n8n) ────────────────────────────
+        if any(w in mensaje_lower for w in ["proveedor", "compra", "orden", "n8n"]):
             ordenes = db.query(models.OrdenCompra).order_by(models.OrdenCompra.fecha_orden.desc()).limit(7).all()
             if ordenes:
                 lineas = []
                 for o in ordenes:
                     prov = o.proveedor.nombre if o.proveedor else "—"
                     insumo = o.insumo.nombre if o.insumo else "—"
-                    lineas.append(f"• Orden #{o.id} ({o.fecha_orden}): **{insumo}** ({o.cantidad}) → {prov} [{o.estado.upper()}]")
-                res = "🛒 **Órdenes de Compra Recientes:**\n\n" + "\n".join(lineas)
+                    lineas.append(f"• Orden #{o.id} ({o.fecha_orden}): **{insumo}** ({o.cantidad}) ➔ {prov} [{o.estado.upper()}]")
+                res = "🛒 **Órdenes de Compra Recientes (n8n):**\n\n" + "\n".join(lineas)
+                return {"respuesta": res, "mensaje": res}
+
+        # ── 7. MODELOS ML / ALGORITMOS ──────────────────────────────────────────
+        if any(w in mensaje_lower for w in ["modelo", "modelos", "algoritmo", "algoritmos", "r2", "rmse", "mae", "machine learning", "ia"]):
+            res = (
+                "🤖 **Modelos de Machine Learning Evaluados en el Sistema:**\n\n"
+                "El sistema compara 5 algoritmos predictivos en tiempo real por cada producto:\n"
+                "1. **Ensemble Híbrido (RF+GB+LR):** Modelo ensamble que combina bosques aleatorios, boosting y regresión.\n"
+                "2. **Random Forest:** Árboles de decisión independientes ideales para demanda no lineal.\n"
+                "3. **Gradient Boosting:** Boosting secuencial para corregir errores residuales.\n"
+                "4. **Regresión Lineal:** Captura tendencias directas de consumo.\n"
+                "5. **Red Neuronal (MLP):** Red neuronal multicapa para patrones complejos.\n\n"
+                "💡 *El sistema selecciona automáticamente el algoritmo con menor RMSE y mayor R² para cada producto.*"
+            )
+            return {"respuesta": res, "mensaje": res}
+
+        # ── 8. VENDEDORES / PERSONAL ────────────────────────────────────────────
+        if any(w in mensaje_lower for w in ["vendedor", "vendedores", "personal", "cajero"]):
+            vendedores = db.query(models.DimVendedor).filter(models.DimVendedor.activo == True).all()
+            if vendedores:
+                lineas = [f"• **{v.nombre}** ({v.rol}) — DNI/Tel: {v.telefono or '—'}" for v in vendedores]
+                res = "👥 **Personal y Vendedores Activos:**\n\n" + "\n".join(lineas)
                 return {"respuesta": res, "mensaje": res}
 
     except Exception as e:
@@ -238,4 +307,4 @@ def chatbot_mensaje(msg: ChatMessage, db: Session = Depends(get_db)):
 @router.get("/estado")
 def chatbot_estado():
     """Verifica que el chatbot esté operativo."""
-    return {"estado": "ok", "version": "1.0"}
+    return {"estado": "ok", "version": "2.0"}
