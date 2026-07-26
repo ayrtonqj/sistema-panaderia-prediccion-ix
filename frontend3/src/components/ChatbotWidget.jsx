@@ -18,31 +18,40 @@ export default function ChatbotWidget() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  const [micError, setMicError] = useState(null)
   const streamRef = useRef(null)
 
   async function startListening() {
+    setMicError(null)
     if (listening) {
       stopListening()
       return
     }
 
-    // 1. Solicitar permiso explícito y mantener el micrófono abierto durante la sesión
+    // 1. Solicitar permiso de micrófono con MediaDevices
+    const hasMediaDevices = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+
+    if (!hasMediaDevices && !SpeechRecognition) {
+      setMicError('⚠️ Tu navegador no soporta micrófono. Prueba abrir el sistema en Google Chrome o Microsoft Edge.')
+      return
+    }
+
     try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      if (hasMediaDevices) {
         const micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
         streamRef.current = micStream
       }
     } catch (err) {
       console.error('Error al acceder al micrófono:', err)
-      alert('⚠️ No se pudo acceder al micrófono. Haz clic en el ícono de candado 🔒 o micrófono en la barra del navegador para darle permiso.')
+      setMicError('⚠️ Permiso de micrófono bloqueado. Haz clic en el ícono de candado 🔒 o micrófono al lado izquierdo de la URL (arriba) y selecciona "Permitir".')
       setListening(false)
       return
     }
 
-    // 2. Verificar compatibilidad con SpeechRecognition
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    // 2. Iniciar reconocedor de voz nativo
     if (!SpeechRecognition) {
-      alert('Tu navegador no soporta reconocimiento de voz nativo. Usa Google Chrome o Microsoft Edge.')
+      setMicError('⚠️ Tu navegador no soporta voz a texto nativo. Prueba abrir la página en Google Chrome.')
       stopListening()
       return
     }
@@ -58,6 +67,7 @@ export default function ChatbotWidget() {
 
       recognition.onstart = () => {
         setListening(true)
+        setMicError(null)
       }
 
       recognition.onresult = (event) => {
@@ -73,12 +83,14 @@ export default function ChatbotWidget() {
       }
 
       recognition.onerror = (e) => {
-        console.warn('Error en reconocimiento de voz:', e.error)
+        console.warn('Error SpeechRecognition:', e.error)
         stopListening()
         if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-          alert('⚠️ El navegador denegó el acceso al micrófono. Por favor habilítalo en la barra de navegación 🔒.')
+          setMicError('⚠️ El navegador denegó el acceso al micrófono. Por favor permite el micrófono en el candado 🔒 de la barra de direcciones.')
         } else if (e.error === 'network') {
-          alert('⚠️ Error de red con el motor de voz de Chrome. Asegúrate de tener conexión a Internet.')
+          setMicError('⚠️ Error de red en el reconocedor de voz de Chrome. Verifica tu conexión a Internet.')
+        } else if (e.error !== 'no-speech') {
+          setMicError(`⚠️ No se pudo procesar la voz (${e.error}). Habla más cerca del micrófono.`)
         }
       }
 
@@ -92,7 +104,8 @@ export default function ChatbotWidget() {
       recognition.start()
       recognitionRef.current = recognition
     } catch (err) {
-      console.error('Error al iniciar reconocedor:', err)
+      console.error('Catch final startListening:', err)
+      setMicError(`⚠️ Error al iniciar micrófono: ${err.message || err}`)
       stopListening()
     }
   }
@@ -217,6 +230,11 @@ export default function ChatbotWidget() {
             ))}
             {loading && <div className="chat-message bot">🤖 Procesando consulta...</div>}
             {listening && <div className="chat-message bot" style={{ color: '#e53e3e', fontWeight: 'bold' }}>🔴 Escuchando voz... habla ahora</div>}
+            {micError && (
+              <div className="chat-message bot" style={{ background: '#fff5f5', color: '#c53030', border: '1px solid #feb2b2', padding: '10px', borderRadius: '8px', fontSize: '13px', margin: '8px 0' }}>
+                {micError}
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </div>
           <div className="chat-input">
