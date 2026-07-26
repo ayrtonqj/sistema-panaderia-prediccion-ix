@@ -18,41 +18,19 @@ export default function ChatbotWidget() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const [micError, setMicError] = useState(null)
   const streamRef = useRef(null)
 
-  async function startListening() {
+  function startListening() {
     setMicError(null)
+
     if (listening) {
       stopListening()
       return
     }
 
-    // 1. Solicitar permiso de micrófono con MediaDevices
-    const hasMediaDevices = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-
-    if (!hasMediaDevices && !SpeechRecognition) {
-      setMicError('⚠️ Tu navegador no soporta micrófono. Prueba abrir el sistema en Google Chrome o Microsoft Edge.')
-      return
-    }
-
-    try {
-      if (hasMediaDevices) {
-        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-        streamRef.current = micStream
-      }
-    } catch (err) {
-      console.error('Error al acceder al micrófono:', err)
-      setMicError('⚠️ Permiso de micrófono bloqueado. Haz clic en el ícono de candado 🔒 o micrófono al lado izquierdo de la URL (arriba) y selecciona "Permitir".')
-      setListening(false)
-      return
-    }
-
-    // 2. Iniciar reconocedor de voz nativo
     if (!SpeechRecognition) {
-      setMicError('⚠️ Tu navegador no soporta voz a texto nativo. Prueba abrir la página en Google Chrome.')
-      stopListening()
+      alert('Tu navegador no soporta reconocimiento de voz nativo. Por favor abre el sistema desde Google Chrome o Microsoft Edge.')
       return
     }
 
@@ -84,37 +62,34 @@ export default function ChatbotWidget() {
 
       recognition.onerror = (e) => {
         console.warn('Error SpeechRecognition:', e.error)
-        stopListening()
+        setListening(false)
         if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-          setMicError('⚠️ El navegador denegó el acceso al micrófono. Por favor permite el micrófono en el candado 🔒 de la barra de direcciones.')
+          setMicError('⚠️ Acceso al micrófono denegado. Haz clic en el ícono 🔒 al lado izquierdo de la URL (arriba) y selecciona "Permitir micrófono".')
         } else if (e.error === 'network') {
-          setMicError('⚠️ Error de red en el reconocedor de voz de Chrome. Verifica tu conexión a Internet.')
+          setMicError('⚠️ Error de red con el reconocedor de voz. Revisa tu conexión a internet.')
         } else if (e.error !== 'no-speech') {
-          setMicError(`⚠️ No se pudo procesar la voz (${e.error}). Habla más cerca del micrófono.`)
+          setMicError(`⚠️ No se detectó audio (${e.error}). Habla más cerca del micrófono.`)
         }
       }
 
       recognition.onend = () => {
-        stopListening()
+        setListening(false)
         if (finalTranscript.trim()) {
           sendMessageWithText(finalTranscript, true)
         }
       }
 
+      // Ejecutar .start() directamente en la pila síncrona del click
       recognition.start()
       recognitionRef.current = recognition
     } catch (err) {
-      console.error('Catch final startListening:', err)
+      console.error('Error al iniciar micrófono:', err)
       setMicError(`⚠️ Error al iniciar micrófono: ${err.message || err}`)
-      stopListening()
+      setListening(false)
     }
   }
 
   function stopListening() {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop())
-      streamRef.current = null
-    }
     if (recognitionRef.current) {
       try { recognitionRef.current.stop() } catch {}
       recognitionRef.current = null
